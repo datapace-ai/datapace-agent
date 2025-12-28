@@ -1,0 +1,56 @@
+# Docker Compose configuration for Datapace Agent
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in your values
+#   2. Run: docker-compose up -d
+#
+# For development with a local PostgreSQL:
+#   docker-compose --profile dev up -d
+
+services:
+  datapace-agent:
+    image: ghcr.io/datapace-ai/datapace-agent:latest
+    # Or build locally:
+    # build: .
+    container_name: datapace-agent
+    environment:
+      DATAPACE_API_KEY: ${DATAPACE_API_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      COLLECTION_INTERVAL: ${COLLECTION_INTERVAL:-60s}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    restart: unless-stopped
+    # Optional: mount config file
+    # volumes:
+    #   - ./agent.yaml:/app/agent.yaml:ro
+    # command: ["--config", "/app/agent.yaml"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Development database (use with --profile dev)
+  postgres:
+    image: postgres:16-alpine
+    container_name: datapace-dev-db
+    profiles:
+      - dev
+    environment:
+      POSTGRES_USER: datapace
+      POSTGRES_PASSWORD: datapace
+      POSTGRES_DB: datapace_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-dev-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U datapace -d datapace_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

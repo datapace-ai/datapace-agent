@@ -1,0 +1,35 @@
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local config (may contain secrets)
+agent.yaml
+agent.yml
+agent.toml
+*.local.yaml
+*.local.yml
+*.local.toml
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Debug files
+*.log
+
+# Build artifacts
+*.tar.gz
+*.zip
+/dist/

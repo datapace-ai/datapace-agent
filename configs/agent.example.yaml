@@ -1,0 +1,75 @@
+# Datapace Agent Configuration
+# Copy this file to agent.yaml and customize as needed
+
+# Datapace Cloud settings
+datapace:
+  # Your Datapace API key (required)
+  # Get this from https://app.datapace.ai/settings/api-keys
+  api_key: ${DATAPACE_API_KEY}
+
+  # API endpoint (optional, defaults to production)
+  endpoint: https://api.datapace.ai/v1/ingest
+
+  # Request timeout in seconds
+  timeout: 30
+
+  # Number of retries on failure
+  retries: 3
+
+# Database connection settings
+database:
+  # PostgreSQL connection URL (required)
+  # Format: postgres://user:password@host:port/database
+  url: ${DATABASE_URL}
+
+  # Database provider (optional)
+  # Options: auto, generic, rds, aurora, supabase, neon
+  # When set to 'auto', the agent will attempt to detect the provider
+  provider: auto
+
+  # Connection pool settings
+  pool:
+    min_connections: 1
+    max_connections: 5
+    acquire_timeout: 30
+
+# Metrics collection settings
+collection:
+  # How often to collect metrics
+  interval: 60s
+
+  # Which metrics to collect
+  metrics:
+    # Query statistics from pg_stat_statements
+    - pg_stat_statements
+
+    # Table-level statistics
+    - pg_stat_user_tables
+
+    # Index usage statistics
+    - pg_stat_user_indexes
+
+    # Database configuration settings
+    - pg_settings
+
+    # Schema metadata (tables, columns, indexes, foreign keys)
+    - schema_metadata
+
+# Logging configuration
+logging:
+  # Log level: trace, debug, info, warn, error
+  level: info
+
+  # Log format: json, pretty
+  format: json
+
+# Health check server (optional)
+health:
+  # Enable health check HTTP endpoint
+  enabled: true
+
+  # Port for health check server
+  port: 8080
+
+  # Path for health check endpoint
+  path: /health
