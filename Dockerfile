@@ -2,29 +2,14 @@
 FROM rust:1.83-alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
+RUN apk add --no-cache musl-dev pkgconfig
 
 WORKDIR /app
 
-# Copy manifests first for better caching
-COPY Cargo.toml Cargo.lock* ./
+# Copy entire project
+COPY . .
 
-# Create dummy main.rs to cache dependencies
-RUN mkdir src && \
-    echo "fn main() {}" > src/main.rs && \
-    echo "pub fn lib() {}" > src/lib.rs
-
-# Build dependencies only
-RUN cargo build --release && \
-    rm -rf src
-
-# Copy actual source code
-COPY src ./src
-
-# Touch main.rs to trigger rebuild
-RUN touch src/main.rs src/lib.rs
-
-# Build the actual application
+# Build the application
 RUN cargo build --release
 
 # Runtime stage
@@ -43,7 +28,7 @@ WORKDIR /app
 COPY --from=builder /app/target/release/datapace-agent /usr/local/bin/datapace-agent
 
 # Copy example config
-COPY configs/agent.example.yaml /app/agent.example.yaml
+COPY --from=builder /app/configs/agent.example.yaml /app/agent.example.yaml
 
 # Use non-root user
 USER datapace
