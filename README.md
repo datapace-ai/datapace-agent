@@ -116,25 +116,69 @@ GRANT EXECUTE ON FUNCTION pg_stat_statements_reset TO datapace_agent;
 
 ## Supported Databases
 
-| Database | Status | Provider Detection |
-|----------|--------|-------------------|
-| PostgreSQL | Stable | Generic, RDS, Aurora, Supabase, Neon |
-| MySQL/MariaDB | Coming Soon | Generic, RDS, Aurora, Cloud SQL, Azure, PlanetScale |
-| MongoDB | Planned | Generic, Atlas, DocumentDB |
-| Redis | Planned | Generic, ElastiCache |
-| SQL Server | Planned | Generic, RDS, Azure SQL |
+### Relational Databases
+
+| Database | Status | Cloud Providers |
+|----------|--------|-----------------|
+| **PostgreSQL** | Stable | Generic, AWS RDS, Aurora, Supabase, Neon |
+| **MySQL/MariaDB** | Coming Soon | Generic, AWS RDS, Aurora, Cloud SQL, Azure, PlanetScale |
+| **SQL Server** | Planned | Generic, AWS RDS, Azure SQL |
+| **Oracle** | Planned | Generic, Oracle Cloud, AWS RDS |
+| **IBM DB2** | Planned | Generic, IBM Cloud |
+
+### Document Databases
+
+| Database | Status | Cloud Providers |
+|----------|--------|-----------------|
+| **MongoDB** | Planned | Generic, MongoDB Atlas, AWS DocumentDB |
+| **Couchbase** | Planned | Generic, Couchbase Cloud |
+| **Azure Cosmos DB** | Planned | Azure |
+
+### Analytics & Search
+
+| Database | Status | Cloud Providers |
+|----------|--------|-----------------|
+| **Elasticsearch** | Planned | Generic, Elastic Cloud, AWS OpenSearch |
+| **ClickHouse** | Planned | Generic, ClickHouse Cloud |
+| **Snowflake** | Planned | Snowflake |
+| **BigQuery** | Planned | Google Cloud |
+| **Redshift** | Works* | AWS (*PostgreSQL-compatible) |
+
+### Key-Value & Cache
+
+| Database | Status | Cloud Providers |
+|----------|--------|-----------------|
+| **Redis** | Planned | Generic, AWS ElastiCache, Upstash |
+| **DynamoDB** | Planned | AWS |
+
+### Time-Series
+
+| Database | Status | Cloud Providers |
+|----------|--------|-----------------|
+| **TimescaleDB** | Works* | Generic, Timescale Cloud (*PostgreSQL-compatible) |
+| **InfluxDB** | Planned | Generic, InfluxDB Cloud |
+
+### NewSQL (PostgreSQL-compatible)
+
+| Database | Status | Cloud Providers |
+|----------|--------|-----------------|
+| **CockroachDB** | Works* | Generic, Cockroach Cloud (*PostgreSQL-compatible) |
+| **YugabyteDB** | Works* | Generic, Yugabyte Cloud (*PostgreSQL-compatible) |
+| **TiDB** | Planned | Generic, TiDB Cloud (MySQL-compatible) |
+
+> **Note**: Databases marked "Works*" use the PostgreSQL collector as they are wire-compatible.
 
 ### Database-Agnostic Metrics
 
 The agent collects these standard metrics across all supported databases:
 
-| Metric | PostgreSQL Source | MySQL Source | Description |
-|--------|-------------------|--------------|-------------|
-| `query_stats` | pg_stat_statements | performance_schema | Query performance statistics |
-| `table_stats` | pg_stat_user_tables | information_schema | Table-level statistics |
-| `index_stats` | pg_stat_user_indexes | information_schema | Index usage statistics |
-| `settings` | pg_settings | SHOW VARIABLES | Database configuration |
-| `schema_metadata` | information_schema | information_schema | Schema structure |
+| Metric | Description | Example Sources |
+|--------|-------------|-----------------|
+| `query_stats` | Query performance statistics | pg_stat_statements, performance_schema, $currentOp |
+| `table_stats` | Table-level statistics | pg_stat_user_tables, information_schema, collStats |
+| `index_stats` | Index usage statistics | pg_stat_user_indexes, $indexStats |
+| `settings` | Database configuration | pg_settings, SHOW VARIABLES, db.adminCommand |
+| `schema_metadata` | Schema structure | information_schema, listCollections |
 
 ## Building from Source
 
@@ -230,13 +274,15 @@ The collector architecture makes it easy to add new databases:
 4. Register in the collector factory
 
 **Databases we'd love help with:**
-- MySQL / MariaDB
-- MongoDB
-- Redis
-- Microsoft SQL Server
-- ClickHouse
-- CockroachDB
-- TimescaleDB
+
+| Category | Databases |
+|----------|-----------|
+| Relational | MySQL, MariaDB, SQL Server, Oracle, IBM DB2 |
+| Document | MongoDB, Couchbase, Azure Cosmos DB |
+| Analytics | Elasticsearch, ClickHouse, Snowflake, BigQuery |
+| Key-Value | Redis, DynamoDB |
+| Time-Series | InfluxDB |
+| NewSQL | TiDB |
 
 ### Development Setup
 

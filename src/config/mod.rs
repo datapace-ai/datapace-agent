@@ -34,26 +34,146 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum DatabaseType {
+    // Relational databases
     #[default]
     Postgres,
     Mysql,
+    Sqlserver,
+    Oracle,
+    Db2,
+
+    // Document databases
     Mongodb,
+    Couchbase,
+    Cosmosdb,
+
+    // Search & Analytics
+    Elasticsearch,
+    Clickhouse,
+    Snowflake,
+    Bigquery,
+    Redshift,
+
+    // Key-Value & Cache
+    Redis,
+    Dynamodb,
+
+    // Time-series
+    Timescaledb,
+    Influxdb,
+
+    // NewSQL
+    Cockroachdb,
+    Yugabytedb,
+    Tidb,
 }
 
 impl DatabaseType {
     /// Auto-detect database type from connection URL
     pub fn from_url(url: &str) -> Result<Self, ConfigError> {
-        if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-            Ok(DatabaseType::Postgres)
-        } else if url.starts_with("mysql://") || url.starts_with("mariadb://") {
-            Ok(DatabaseType::Mysql)
-        } else if url.starts_with("mongodb://") || url.starts_with("mongodb+srv://") {
-            Ok(DatabaseType::Mongodb)
-        } else {
-            Err(ConfigError::UnsupportedDatabase(
-                "Unable to detect database type from URL. Supported schemes: postgres://, postgresql://, mysql://, mariadb://, mongodb://, mongodb+srv://".to_string()
-            ))
+        let url_lower = url.to_lowercase();
+
+        // PostgreSQL variants
+        if url_lower.starts_with("postgres://") || url_lower.starts_with("postgresql://") {
+            // Check for TimescaleDB or CockroachDB hints in the URL
+            if url_lower.contains("timescale") {
+                return Ok(DatabaseType::Timescaledb);
+            }
+            if url_lower.contains("cockroach") {
+                return Ok(DatabaseType::Cockroachdb);
+            }
+            if url_lower.contains("yugabyte") {
+                return Ok(DatabaseType::Yugabytedb);
+            }
+            return Ok(DatabaseType::Postgres);
         }
+
+        // MySQL variants
+        if url_lower.starts_with("mysql://") || url_lower.starts_with("mariadb://") {
+            if url_lower.contains("tidb") {
+                return Ok(DatabaseType::Tidb);
+            }
+            return Ok(DatabaseType::Mysql);
+        }
+
+        // MongoDB
+        if url_lower.starts_with("mongodb://") || url_lower.starts_with("mongodb+srv://") {
+            return Ok(DatabaseType::Mongodb);
+        }
+
+        // SQL Server
+        if url_lower.starts_with("sqlserver://")
+            || url_lower.starts_with("mssql://")
+            || url_lower.contains("database.windows.net")
+        {
+            return Ok(DatabaseType::Sqlserver);
+        }
+
+        // Oracle
+        if url_lower.starts_with("oracle://") || url_lower.contains("oraclecloud.com") {
+            return Ok(DatabaseType::Oracle);
+        }
+
+        // IBM DB2
+        if url_lower.starts_with("db2://") || url_lower.starts_with("ibmdb://") {
+            return Ok(DatabaseType::Db2);
+        }
+
+        // Redis
+        if url_lower.starts_with("redis://") || url_lower.starts_with("rediss://") {
+            return Ok(DatabaseType::Redis);
+        }
+
+        // Elasticsearch
+        if url_lower.starts_with("elasticsearch://")
+            || url_lower.starts_with("https://") && url_lower.contains("elastic")
+        {
+            return Ok(DatabaseType::Elasticsearch);
+        }
+
+        // ClickHouse
+        if url_lower.starts_with("clickhouse://") || url_lower.contains("clickhouse") {
+            return Ok(DatabaseType::Clickhouse);
+        }
+
+        // Azure Cosmos DB
+        if url_lower.contains("cosmos.azure.com") || url_lower.contains("cosmosdb") {
+            return Ok(DatabaseType::Cosmosdb);
+        }
+
+        // Couchbase
+        if url_lower.starts_with("couchbase://") || url_lower.starts_with("couchbases://") {
+            return Ok(DatabaseType::Couchbase);
+        }
+
+        // Snowflake
+        if url_lower.contains("snowflakecomputing.com") {
+            return Ok(DatabaseType::Snowflake);
+        }
+
+        // BigQuery
+        if url_lower.starts_with("bigquery://") || url_lower.contains("bigquery.googleapis.com") {
+            return Ok(DatabaseType::Bigquery);
+        }
+
+        // Redshift
+        if url_lower.contains("redshift.amazonaws.com") {
+            return Ok(DatabaseType::Redshift);
+        }
+
+        // DynamoDB
+        if url_lower.contains("dynamodb") {
+            return Ok(DatabaseType::Dynamodb);
+        }
+
+        // InfluxDB
+        if url_lower.starts_with("influxdb://") || url_lower.contains("influxdata") {
+            return Ok(DatabaseType::Influxdb);
+        }
+
+        Err(ConfigError::UnsupportedDatabase(format!(
+            "Unable to detect database type from URL. Supported databases: PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, DB2, Redis, Elasticsearch, ClickHouse, Cosmos DB, Couchbase, Snowflake, BigQuery, Redshift, DynamoDB, InfluxDB, TimescaleDB, CockroachDB, YugabyteDB, TiDB"
+        )))
     }
 
     /// Get all supported URL schemes for this database type
@@ -62,6 +182,53 @@ impl DatabaseType {
             DatabaseType::Postgres => &["postgres://", "postgresql://"],
             DatabaseType::Mysql => &["mysql://", "mariadb://"],
             DatabaseType::Mongodb => &["mongodb://", "mongodb+srv://"],
+            DatabaseType::Sqlserver => &["sqlserver://", "mssql://"],
+            DatabaseType::Oracle => &["oracle://"],
+            DatabaseType::Db2 => &["db2://", "ibmdb://"],
+            DatabaseType::Redis => &["redis://", "rediss://"],
+            DatabaseType::Elasticsearch => &["elasticsearch://", "https://"],
+            DatabaseType::Clickhouse => &["clickhouse://"],
+            DatabaseType::Cosmosdb => &["https://"],
+            DatabaseType::Couchbase => &["couchbase://", "couchbases://"],
+            DatabaseType::Snowflake => &["https://"],
+            DatabaseType::Bigquery => &["bigquery://"],
+            DatabaseType::Redshift => &["postgres://"],  // Redshift uses PostgreSQL protocol
+            DatabaseType::Dynamodb => &["https://"],
+            DatabaseType::Influxdb => &["influxdb://", "https://"],
+            DatabaseType::Timescaledb => &["postgres://", "postgresql://"],
+            DatabaseType::Cockroachdb => &["postgres://", "postgresql://"],
+            DatabaseType::Yugabytedb => &["postgres://", "postgresql://"],
+            DatabaseType::Tidb => &["mysql://"],
+        }
+    }
+
+    /// Check if this database type is currently supported
+    pub fn is_implemented(&self) -> bool {
+        matches!(self, DatabaseType::Postgres)
+    }
+
+    /// Get the category of this database
+    pub fn category(&self) -> &'static str {
+        match self {
+            DatabaseType::Postgres
+            | DatabaseType::Mysql
+            | DatabaseType::Sqlserver
+            | DatabaseType::Oracle
+            | DatabaseType::Db2 => "Relational",
+
+            DatabaseType::Mongodb | DatabaseType::Couchbase | DatabaseType::Cosmosdb => "Document",
+
+            DatabaseType::Elasticsearch
+            | DatabaseType::Clickhouse
+            | DatabaseType::Snowflake
+            | DatabaseType::Bigquery
+            | DatabaseType::Redshift => "Analytics",
+
+            DatabaseType::Redis | DatabaseType::Dynamodb => "Key-Value",
+
+            DatabaseType::Timescaledb | DatabaseType::Influxdb => "Time-Series",
+
+            DatabaseType::Cockroachdb | DatabaseType::Yugabytedb | DatabaseType::Tidb => "NewSQL",
         }
     }
 }
@@ -72,6 +239,23 @@ impl std::fmt::Display for DatabaseType {
             DatabaseType::Postgres => write!(f, "postgres"),
             DatabaseType::Mysql => write!(f, "mysql"),
             DatabaseType::Mongodb => write!(f, "mongodb"),
+            DatabaseType::Sqlserver => write!(f, "sqlserver"),
+            DatabaseType::Oracle => write!(f, "oracle"),
+            DatabaseType::Db2 => write!(f, "db2"),
+            DatabaseType::Redis => write!(f, "redis"),
+            DatabaseType::Elasticsearch => write!(f, "elasticsearch"),
+            DatabaseType::Clickhouse => write!(f, "clickhouse"),
+            DatabaseType::Cosmosdb => write!(f, "cosmosdb"),
+            DatabaseType::Couchbase => write!(f, "couchbase"),
+            DatabaseType::Snowflake => write!(f, "snowflake"),
+            DatabaseType::Bigquery => write!(f, "bigquery"),
+            DatabaseType::Redshift => write!(f, "redshift"),
+            DatabaseType::Dynamodb => write!(f, "dynamodb"),
+            DatabaseType::Influxdb => write!(f, "influxdb"),
+            DatabaseType::Timescaledb => write!(f, "timescaledb"),
+            DatabaseType::Cockroachdb => write!(f, "cockroachdb"),
+            DatabaseType::Yugabytedb => write!(f, "yugabytedb"),
+            DatabaseType::Tidb => write!(f, "tidb"),
         }
     }
 }
@@ -558,8 +742,69 @@ mod tests {
             DatabaseType::Mongodb
         );
 
-        // Unsupported URL
-        assert!(DatabaseType::from_url("redis://localhost").is_err());
+        // SQL Server
+        assert_eq!(
+            DatabaseType::from_url("sqlserver://localhost/db").unwrap(),
+            DatabaseType::Sqlserver
+        );
+        assert_eq!(
+            DatabaseType::from_url("mssql://myserver.database.windows.net/db").unwrap(),
+            DatabaseType::Sqlserver
+        );
+
+        // Oracle
+        assert_eq!(
+            DatabaseType::from_url("oracle://localhost:1521/db").unwrap(),
+            DatabaseType::Oracle
+        );
+
+        // Redis
+        assert_eq!(
+            DatabaseType::from_url("redis://localhost:6379").unwrap(),
+            DatabaseType::Redis
+        );
+        assert_eq!(
+            DatabaseType::from_url("rediss://localhost:6379").unwrap(),
+            DatabaseType::Redis
+        );
+
+        // Elasticsearch
+        assert_eq!(
+            DatabaseType::from_url("elasticsearch://localhost:9200").unwrap(),
+            DatabaseType::Elasticsearch
+        );
+
+        // ClickHouse
+        assert_eq!(
+            DatabaseType::from_url("clickhouse://localhost:8123/db").unwrap(),
+            DatabaseType::Clickhouse
+        );
+
+        // Cosmos DB
+        assert_eq!(
+            DatabaseType::from_url("https://myaccount.documents.azure.cosmos.azure.com").unwrap(),
+            DatabaseType::Cosmosdb
+        );
+
+        // NewSQL - PostgreSQL compatible
+        assert_eq!(
+            DatabaseType::from_url("postgres://cockroachdb.example.com/db").unwrap(),
+            DatabaseType::Cockroachdb
+        );
+        assert_eq!(
+            DatabaseType::from_url("postgres://timescaledb.example.com/db").unwrap(),
+            DatabaseType::Timescaledb
+        );
+
+        // Cloud data warehouses
+        assert_eq!(
+            DatabaseType::from_url("postgres://mydb.redshift.amazonaws.com/db").unwrap(),
+            DatabaseType::Redshift
+        );
+        assert_eq!(
+            DatabaseType::from_url("https://myaccount.snowflakecomputing.com").unwrap(),
+            DatabaseType::Snowflake
+        );
     }
 
     #[test]
@@ -567,6 +812,21 @@ mod tests {
         assert_eq!(format!("{}", DatabaseType::Postgres), "postgres");
         assert_eq!(format!("{}", DatabaseType::Mysql), "mysql");
         assert_eq!(format!("{}", DatabaseType::Mongodb), "mongodb");
+        assert_eq!(format!("{}", DatabaseType::Sqlserver), "sqlserver");
+        assert_eq!(format!("{}", DatabaseType::Oracle), "oracle");
+        assert_eq!(format!("{}", DatabaseType::Elasticsearch), "elasticsearch");
+    }
+
+    #[test]
+    fn test_database_type_category() {
+        assert_eq!(DatabaseType::Postgres.category(), "Relational");
+        assert_eq!(DatabaseType::Mysql.category(), "Relational");
+        assert_eq!(DatabaseType::Oracle.category(), "Relational");
+        assert_eq!(DatabaseType::Mongodb.category(), "Document");
+        assert_eq!(DatabaseType::Redis.category(), "Key-Value");
+        assert_eq!(DatabaseType::Elasticsearch.category(), "Analytics");
+        assert_eq!(DatabaseType::Timescaledb.category(), "Time-Series");
+        assert_eq!(DatabaseType::Cockroachdb.category(), "NewSQL");
     }
 
     #[test]
