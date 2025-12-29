@@ -303,6 +303,49 @@ pub async fn create_collector(
             let collector = postgres::PostgresCollector::new(database_url, provider).await?;
             Ok(Box::new(collector))
         }
+
+        // Coming soon - Graph databases
+        DatabaseType::Neo4j => {
+            Err(CollectorError::UnsupportedDatabase(
+                "Neo4j support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Neptune => {
+            Err(CollectorError::UnsupportedDatabase(
+                "AWS Neptune support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Arangodb => {
+            Err(CollectorError::UnsupportedDatabase(
+                "ArangoDB support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Janusgraph => {
+            Err(CollectorError::UnsupportedDatabase(
+                "JanusGraph support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Tigergraph => {
+            Err(CollectorError::UnsupportedDatabase(
+                "TigerGraph support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Dgraph => {
+            Err(CollectorError::UnsupportedDatabase(
+                "Dgraph support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Memgraph => {
+            Err(CollectorError::UnsupportedDatabase(
+                "Memgraph support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
     }
 }
 

@@ -74,6 +74,15 @@ pub enum DatabaseType {
     Qdrant,
     Chroma,
     Pgvector,  // PostgreSQL extension
+
+    // Graph databases
+    Neo4j,
+    Neptune,      // AWS Neptune
+    Arangodb,
+    Janusgraph,
+    Tigergraph,
+    Dgraph,
+    Memgraph,
 }
 
 impl DatabaseType {
@@ -202,8 +211,40 @@ impl DatabaseType {
 
         // pgvector is detected via PostgreSQL URL + extension check at runtime
 
+        // Graph databases
+        if url_lower.starts_with("neo4j://")
+            || url_lower.starts_with("bolt://")
+            || url_lower.contains("neo4j")
+        {
+            return Ok(DatabaseType::Neo4j);
+        }
+
+        if url_lower.contains("neptune.amazonaws.com") {
+            return Ok(DatabaseType::Neptune);
+        }
+
+        if url_lower.contains("arangodb") || url_lower.starts_with("arangodb://") {
+            return Ok(DatabaseType::Arangodb);
+        }
+
+        if url_lower.contains("janusgraph") {
+            return Ok(DatabaseType::Janusgraph);
+        }
+
+        if url_lower.contains("tigergraph") {
+            return Ok(DatabaseType::Tigergraph);
+        }
+
+        if url_lower.contains("dgraph") {
+            return Ok(DatabaseType::Dgraph);
+        }
+
+        if url_lower.contains("memgraph") {
+            return Ok(DatabaseType::Memgraph);
+        }
+
         Err(ConfigError::UnsupportedDatabase(format!(
-            "Unable to detect database type from URL. Supported databases: PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, DB2, Redis, Elasticsearch, ClickHouse, Cosmos DB, Couchbase, Snowflake, BigQuery, Redshift, DynamoDB, InfluxDB, TimescaleDB, CockroachDB, YugabyteDB, TiDB, Pinecone, Milvus, Weaviate, Qdrant, Chroma"
+            "Unable to detect database type from URL. Supported: PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, DB2, Redis, Elasticsearch, ClickHouse, Cosmos DB, Snowflake, BigQuery, Redshift, DynamoDB, InfluxDB, TimescaleDB, CockroachDB, YugabyteDB, TiDB, Pinecone, Milvus, Weaviate, Qdrant, Chroma, Neo4j, Neptune, ArangoDB, JanusGraph, TigerGraph, Dgraph, Memgraph"
         )))
     }
 
@@ -236,6 +277,13 @@ impl DatabaseType {
             DatabaseType::Qdrant => &["https://", "http://"],
             DatabaseType::Chroma => &["https://", "http://"],
             DatabaseType::Pgvector => &["postgres://", "postgresql://"],
+            DatabaseType::Neo4j => &["neo4j://", "bolt://", "neo4j+s://"],
+            DatabaseType::Neptune => &["wss://", "https://"],
+            DatabaseType::Arangodb => &["https://", "http://"],
+            DatabaseType::Janusgraph => &["ws://", "wss://"],
+            DatabaseType::Tigergraph => &["https://"],
+            DatabaseType::Dgraph => &["https://", "http://"],
+            DatabaseType::Memgraph => &["bolt://", "neo4j://"],
         }
     }
 
@@ -273,6 +321,14 @@ impl DatabaseType {
             | DatabaseType::Qdrant
             | DatabaseType::Chroma
             | DatabaseType::Pgvector => "Vector",
+
+            DatabaseType::Neo4j
+            | DatabaseType::Neptune
+            | DatabaseType::Arangodb
+            | DatabaseType::Janusgraph
+            | DatabaseType::Tigergraph
+            | DatabaseType::Dgraph
+            | DatabaseType::Memgraph => "Graph",
         }
     }
 }
@@ -306,6 +362,13 @@ impl std::fmt::Display for DatabaseType {
             DatabaseType::Qdrant => write!(f, "qdrant"),
             DatabaseType::Chroma => write!(f, "chroma"),
             DatabaseType::Pgvector => write!(f, "pgvector"),
+            DatabaseType::Neo4j => write!(f, "neo4j"),
+            DatabaseType::Neptune => write!(f, "neptune"),
+            DatabaseType::Arangodb => write!(f, "arangodb"),
+            DatabaseType::Janusgraph => write!(f, "janusgraph"),
+            DatabaseType::Tigergraph => write!(f, "tigergraph"),
+            DatabaseType::Dgraph => write!(f, "dgraph"),
+            DatabaseType::Memgraph => write!(f, "memgraph"),
         }
     }
 }

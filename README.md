@@ -177,6 +177,18 @@ GRANT EXECUTE ON FUNCTION pg_stat_statements_reset TO datapace_agent;
 | **Qdrant** | Planned | Generic, Qdrant Cloud |
 | **Chroma** | Planned | Generic |
 
+### Graph Databases
+
+| Database | Status | Cloud Providers |
+|----------|--------|-----------------|
+| **Neo4j** | Planned | Generic, Neo4j Aura |
+| **Amazon Neptune** | Planned | AWS |
+| **ArangoDB** | Planned | Generic, ArangoDB Oasis |
+| **JanusGraph** | Planned | Generic |
+| **TigerGraph** | Planned | Generic, TigerGraph Cloud |
+| **Dgraph** | Planned | Generic, Dgraph Cloud |
+| **Memgraph** | Planned | Generic, Memgraph Cloud |
+
 > **Note**: Databases marked "Works*" use the PostgreSQL collector as they are wire-compatible.
 
 ### Database-Agnostic Metrics
@@ -295,6 +307,7 @@ The collector architecture makes it easy to add new databases:
 | Time-Series | InfluxDB |
 | NewSQL | TiDB |
 | Vector | Pinecone, Milvus, Weaviate, Qdrant, Chroma |
+| Graph | Neo4j, Neptune, ArangoDB, JanusGraph, TigerGraph, Dgraph, Memgraph |
 
 ### Development Setup
 
