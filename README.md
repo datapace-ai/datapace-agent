@@ -78,14 +78,16 @@ database:
   provider: auto  # auto, rds, aurora, supabase, neon, generic
 
 collection:
-  interval: 60s
+  interval_secs: 60
   metrics:
-    - pg_stat_statements
-    - pg_stat_user_tables
-    - pg_stat_user_indexes
-    - pg_settings
-    - schema_metadata
+    - query_stats       # Query performance (pg_stat_statements, performance_schema)
+    - table_stats       # Table statistics
+    - index_stats       # Index usage
+    - settings          # Database configuration
+    - schema_metadata   # Schema structure
 ```
+
+> **Note**: The old PostgreSQL-specific metric names (`pg_stat_statements`, etc.) are still supported for backward compatibility.
 
 Run with config file:
 
@@ -116,13 +118,23 @@ GRANT EXECUTE ON FUNCTION pg_stat_statements_reset TO datapace_agent;
 
 | Database | Status | Provider Detection |
 |----------|--------|-------------------|
-| PostgreSQL | Stable | Generic |
-| AWS RDS PostgreSQL | Stable | Auto-detected |
-| AWS Aurora PostgreSQL | Stable | Auto-detected |
-| Supabase | Stable | Auto-detected |
-| Neon | Stable | Auto-detected |
-| MySQL | Planned | - |
-| MongoDB | Planned | - |
+| PostgreSQL | Stable | Generic, RDS, Aurora, Supabase, Neon |
+| MySQL/MariaDB | Coming Soon | Generic, RDS, Aurora, Cloud SQL, Azure, PlanetScale |
+| MongoDB | Planned | Generic, Atlas, DocumentDB |
+| Redis | Planned | Generic, ElastiCache |
+| SQL Server | Planned | Generic, RDS, Azure SQL |
+
+### Database-Agnostic Metrics
+
+The agent collects these standard metrics across all supported databases:
+
+| Metric | PostgreSQL Source | MySQL Source | Description |
+|--------|-------------------|--------------|-------------|
+| `query_stats` | pg_stat_statements | performance_schema | Query performance statistics |
+| `table_stats` | pg_stat_user_tables | information_schema | Table-level statistics |
+| `index_stats` | pg_stat_user_indexes | information_schema | Index usage statistics |
+| `settings` | pg_settings | SHOW VARIABLES | Database configuration |
+| `schema_metadata` | information_schema | information_schema | Schema structure |
 
 ## Building from Source
 
@@ -161,32 +173,70 @@ docker run -e DATAPACE_API_KEY=key -e DATABASE_URL=postgres://... datapace-agent
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   User's Environment                 │
-│  ┌───────────────────────────────────────────────┐  │
-│  │            datapace-agent (Docker)            │  │
-│  │  ┌─────────┐  ┌──────────┐  ┌─────────────┐  │  │
-│  │  │Collector│→ │Normalizer│→ │  Uploader   │  │  │
-│  │  │         │  │          │  │ (to Cloud)  │  │  │
-│  │  └────┬────┘  └──────────┘  └──────┬──────┘  │  │
-│  └───────│───────────────────────────│──────────┘  │
-│          │                           │              │
-│          ▼                           │              │
-│  ┌───────────────┐                   │              │
-│  │   PostgreSQL  │                   │              │
-│  └───────────────┘                   │              │
-└──────────────────────────────────────│──────────────┘
-                                       │
-                                       ▼ HTTPS
-                          ┌────────────────────────┐
-                          │    Datapace Cloud      │
-                          │  api.datapace.ai       │
-                          └────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         datapace-agent                           │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                    Collector Factory                      │   │
+│  │              create_collector(db_type, url)               │   │
+│  └─────────────────────────┬────────────────────────────────┘   │
+│                            │                                     │
+│          ┌─────────────────┼─────────────────┐                  │
+│          ▼                 ▼                 ▼                  │
+│   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐          │
+│   │  PostgreSQL │   │    MySQL    │   │   MongoDB   │          │
+│   │  Collector  │   │  Collector  │   │  Collector  │          │
+│   │   (stable)  │   │(coming soon)│   │  (planned)  │          │
+│   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘          │
+│          │                 │                 │                  │
+│          └─────────────────┼─────────────────┘                  │
+│                            ▼                                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │              Payload (Database-Agnostic)                  │   │
+│  │     query_stats, table_stats, index_stats, settings       │   │
+│  └─────────────────────────┬────────────────────────────────┘   │
+│                            │                                     │
+│                            ▼                                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                       Uploader                            │   │
+│  │              POST to api.datapace.ai/v1/ingest            │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+### Key Components
+
+| Component | Description |
+|-----------|-------------|
+| **Collector Trait** | Interface for database-specific metric collection |
+| **Collector Factory** | Auto-detects database type from URL and creates appropriate collector |
+| **Payload** | Normalized, database-agnostic data structure |
+| **Uploader** | Sends data to Datapace Cloud with retry logic |
+| **Scheduler** | Periodic collection loop with graceful shutdown |
 
 ## Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
+
+### Adding New Database Support
+
+Want to add support for MySQL, MongoDB, or another database? See our **[Extension Guide](docs/EXTENDING.md)** for step-by-step instructions.
+
+The collector architecture makes it easy to add new databases:
+
+1. Create a new collector module (`src/collector/mysql/`)
+2. Implement the `Collector` trait
+3. Add provider detection for cloud variants
+4. Register in the collector factory
+
+**Databases we'd love help with:**
+- MySQL / MariaDB
+- MongoDB
+- Redis
+- Microsoft SQL Server
+- ClickHouse
+- CockroachDB
+- TimescaleDB
 
 ### Development Setup
 

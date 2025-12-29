@@ -1,10 +1,23 @@
 //! Database metrics collectors.
 //!
 //! This module defines the `Collector` trait and implementations for
-//! various database providers.
+//! various database types and cloud providers.
+//!
+//! # Supported Databases
+//!
+//! - **PostgreSQL** - Full support (pg_stat_statements, pg_stat_user_tables, etc.)
+//! - **MySQL** - Planned (performance_schema, information_schema)
+//! - **MongoDB** - Planned (serverStatus, dbStats)
+//!
+//! # Adding a New Database
+//!
+//! See `docs/EXTENDING.md` for a complete guide on adding support for new databases.
 
 pub mod postgres;
+// pub mod mysql;    // Coming soon
+// pub mod mongodb;  // Coming soon
 
+use crate::config::DatabaseType;
 use crate::payload::Payload;
 use async_trait::async_trait;
 use thiserror::Error;
@@ -23,6 +36,9 @@ pub enum CollectorError {
 
     #[error("Unsupported database version: {0}")]
     UnsupportedVersion(String),
+
+    #[error("Unsupported database type: {0}")]
+    UnsupportedDatabase(String),
 
     #[error("Provider detection failed: {0}")]
     DetectionError(String),
@@ -54,6 +70,42 @@ impl From<sqlx::Error> for CollectorError {
 ///
 /// Implementations of this trait collect metrics from specific database types
 /// and providers, returning a normalized `Payload` that can be sent to Datapace Cloud.
+///
+/// # Implementing a New Collector
+///
+/// ```ignore
+/// use async_trait::async_trait;
+/// use crate::collector::{Collector, CollectorError};
+/// use crate::config::DatabaseType;
+/// use crate::payload::Payload;
+///
+/// pub struct MyDatabaseCollector {
+///     // ... connection pool and metadata
+/// }
+///
+/// #[async_trait]
+/// impl Collector for MyDatabaseCollector {
+///     async fn collect(&self) -> Result<Payload, CollectorError> {
+///         // Collect metrics and return normalized payload
+///     }
+///
+///     async fn test_connection(&self) -> Result<(), CollectorError> {
+///         // Test database connectivity
+///     }
+///
+///     fn provider(&self) -> &str {
+///         // Return detected cloud provider (e.g., "rds", "neon", "generic")
+///     }
+///
+///     fn version(&self) -> Option<&str> {
+///         // Return database version
+///     }
+///
+///     fn database_type(&self) -> DatabaseType {
+///         // Return the database type
+///     }
+/// }
+/// ```
 #[async_trait]
 pub trait Collector: Send + Sync {
     /// Collect metrics from the database
@@ -67,21 +119,63 @@ pub trait Collector: Send + Sync {
     /// what went wrong.
     async fn test_connection(&self) -> Result<(), CollectorError>;
 
-    /// Get the detected database provider
+    /// Get the detected cloud provider (e.g., "rds", "aurora", "neon", "generic")
     fn provider(&self) -> &str;
 
     /// Get the database version
     fn version(&self) -> Option<&str>;
+
+    /// Get the database type
+    fn database_type(&self) -> DatabaseType;
 }
 
-/// Factory function to create a collector based on configuration
+/// Factory function to create a collector based on database URL
+///
+/// Automatically detects the database type from the URL and creates
+/// the appropriate collector implementation.
+///
+/// # Supported Database Types
+///
+/// - `postgres://` or `postgresql://` - PostgreSQL
+/// - `mysql://` or `mariadb://` - MySQL (coming soon)
+/// - `mongodb://` or `mongodb+srv://` - MongoDB (coming soon)
+///
+/// # Example
+///
+/// ```ignore
+/// let collector = create_collector(
+///     "postgres://user:pass@localhost/mydb",
+///     Provider::Auto,
+/// ).await?;
+///
+/// let payload = collector.collect().await?;
+/// ```
 pub async fn create_collector(
     database_url: &str,
     provider: crate::config::Provider,
 ) -> Result<Box<dyn Collector>, CollectorError> {
-    // For now, we only support PostgreSQL
-    let collector = postgres::PostgresCollector::new(database_url, provider).await?;
-    Ok(Box::new(collector))
+    // Detect database type from URL
+    let db_type = DatabaseType::from_url(database_url)
+        .map_err(|e| CollectorError::UnsupportedDatabase(e.to_string()))?;
+
+    match db_type {
+        DatabaseType::Postgres => {
+            let collector = postgres::PostgresCollector::new(database_url, provider).await?;
+            Ok(Box::new(collector))
+        }
+        DatabaseType::Mysql => {
+            // MySQL support coming soon
+            Err(CollectorError::UnsupportedDatabase(
+                "MySQL support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+        DatabaseType::Mongodb => {
+            // MongoDB support coming soon
+            Err(CollectorError::UnsupportedDatabase(
+                "MongoDB support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+    }
 }
 
 #[cfg(test)]

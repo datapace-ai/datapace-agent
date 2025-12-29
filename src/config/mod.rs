@@ -25,6 +25,55 @@ pub enum ConfigError {
 
     #[error("Missing required field: {0}")]
     MissingField(String),
+
+    #[error("Unsupported database type: {0}")]
+    UnsupportedDatabase(String),
+}
+
+/// Supported database types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DatabaseType {
+    #[default]
+    Postgres,
+    Mysql,
+    Mongodb,
+}
+
+impl DatabaseType {
+    /// Auto-detect database type from connection URL
+    pub fn from_url(url: &str) -> Result<Self, ConfigError> {
+        if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+            Ok(DatabaseType::Postgres)
+        } else if url.starts_with("mysql://") || url.starts_with("mariadb://") {
+            Ok(DatabaseType::Mysql)
+        } else if url.starts_with("mongodb://") || url.starts_with("mongodb+srv://") {
+            Ok(DatabaseType::Mongodb)
+        } else {
+            Err(ConfigError::UnsupportedDatabase(
+                "Unable to detect database type from URL. Supported schemes: postgres://, postgresql://, mysql://, mariadb://, mongodb://, mongodb+srv://".to_string()
+            ))
+        }
+    }
+
+    /// Get all supported URL schemes for this database type
+    pub fn url_schemes(&self) -> &'static [&'static str] {
+        match self {
+            DatabaseType::Postgres => &["postgres://", "postgresql://"],
+            DatabaseType::Mysql => &["mysql://", "mariadb://"],
+            DatabaseType::Mongodb => &["mongodb://", "mongodb+srv://"],
+        }
+    }
+}
+
+impl std::fmt::Display for DatabaseType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DatabaseType::Postgres => write!(f, "postgres"),
+            DatabaseType::Mysql => write!(f, "mysql"),
+            DatabaseType::Mongodb => write!(f, "mongodb"),
+        }
+    }
 }
 
 /// Main configuration structure
@@ -58,11 +107,18 @@ pub struct DatapaceConfig {
 /// Database connection settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
+    /// Database connection URL
     pub url: String,
 
+    /// Database type (auto-detected from URL if not specified)
+    #[serde(default)]
+    pub db_type: DatabaseType,
+
+    /// Cloud provider (auto-detected if not specified)
     #[serde(default)]
     pub provider: Provider,
 
+    /// Connection pool settings
     #[serde(default)]
     pub pool: PoolConfig,
 }
@@ -141,15 +197,41 @@ impl CollectionConfig {
     }
 }
 
-/// Types of metrics that can be collected
+/// Types of metrics that can be collected (database-agnostic)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricType {
-    PgStatStatements,
-    PgStatUserTables,
-    PgStatUserIndexes,
-    PgSettings,
+    /// Query performance statistics (pg_stat_statements, performance_schema, etc.)
+    #[serde(alias = "pg_stat_statements")]
+    QueryStats,
+
+    /// Table-level statistics (sizes, row counts, operations)
+    #[serde(alias = "pg_stat_user_tables")]
+    TableStats,
+
+    /// Index usage statistics
+    #[serde(alias = "pg_stat_user_indexes")]
+    IndexStats,
+
+    /// Database configuration settings
+    #[serde(alias = "pg_settings")]
+    Settings,
+
+    /// Schema metadata (tables, columns, indexes, foreign keys)
     SchemaMetadata,
+}
+
+impl MetricType {
+    /// Get all available metric types
+    pub fn all() -> Vec<MetricType> {
+        vec![
+            MetricType::QueryStats,
+            MetricType::TableStats,
+            MetricType::IndexStats,
+            MetricType::Settings,
+            MetricType::SchemaMetadata,
+        ]
+    }
 }
 
 /// Logging configuration
@@ -255,13 +337,7 @@ fn default_interval_secs() -> u64 {
 }
 
 fn default_metrics() -> Vec<MetricType> {
-    vec![
-        MetricType::PgStatStatements,
-        MetricType::PgStatUserTables,
-        MetricType::PgStatUserIndexes,
-        MetricType::PgSettings,
-        MetricType::SchemaMetadata,
-    ]
+    MetricType::all()
 }
 
 fn default_log_level() -> LogLevel {
@@ -371,13 +447,8 @@ impl Config {
             ));
         }
 
-        if !self.database.url.starts_with("postgres://")
-            && !self.database.url.starts_with("postgresql://")
-        {
-            return Err(ConfigError::ValidationError(
-                "Database URL must be a PostgreSQL connection string".to_string(),
-            ));
-        }
+        // Validate database URL matches a supported database type
+        DatabaseType::from_url(&self.database.url)?;
 
         if self.collection.interval_secs < 10 {
             return Err(ConfigError::ValidationError(
@@ -386,6 +457,11 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// Get the detected database type from the URL
+    pub fn database_type(&self) -> Result<DatabaseType, ConfigError> {
+        DatabaseType::from_url(&self.database.url)
     }
 }
 
@@ -448,5 +524,64 @@ mod tests {
         std::env::set_var("TEST_VAR", "hello");
         let result = expand_env_vars("prefix ${TEST_VAR} suffix");
         assert_eq!(result, "prefix hello suffix");
+    }
+
+    #[test]
+    fn test_database_type_from_url() {
+        // PostgreSQL URLs
+        assert_eq!(
+            DatabaseType::from_url("postgres://localhost/db").unwrap(),
+            DatabaseType::Postgres
+        );
+        assert_eq!(
+            DatabaseType::from_url("postgresql://localhost/db").unwrap(),
+            DatabaseType::Postgres
+        );
+
+        // MySQL URLs
+        assert_eq!(
+            DatabaseType::from_url("mysql://localhost/db").unwrap(),
+            DatabaseType::Mysql
+        );
+        assert_eq!(
+            DatabaseType::from_url("mariadb://localhost/db").unwrap(),
+            DatabaseType::Mysql
+        );
+
+        // MongoDB URLs
+        assert_eq!(
+            DatabaseType::from_url("mongodb://localhost/db").unwrap(),
+            DatabaseType::Mongodb
+        );
+        assert_eq!(
+            DatabaseType::from_url("mongodb+srv://cluster.example.com/db").unwrap(),
+            DatabaseType::Mongodb
+        );
+
+        // Unsupported URL
+        assert!(DatabaseType::from_url("redis://localhost").is_err());
+    }
+
+    #[test]
+    fn test_database_type_display() {
+        assert_eq!(format!("{}", DatabaseType::Postgres), "postgres");
+        assert_eq!(format!("{}", DatabaseType::Mysql), "mysql");
+        assert_eq!(format!("{}", DatabaseType::Mongodb), "mongodb");
+    }
+
+    #[test]
+    fn test_metric_type_aliases() {
+        // Test that old PostgreSQL-specific names still work via serde aliases
+        let yaml = "pg_stat_statements";
+        let metric: MetricType = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(metric, MetricType::QueryStats);
+
+        let yaml = "pg_stat_user_tables";
+        let metric: MetricType = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(metric, MetricType::TableStats);
+
+        let yaml = "query_stats";
+        let metric: MetricType = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(metric, MetricType::QueryStats);
     }
 }

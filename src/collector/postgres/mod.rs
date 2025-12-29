@@ -11,7 +11,7 @@ mod providers;
 mod queries;
 
 use crate::collector::{Collector, CollectorError};
-use crate::config::Provider;
+use crate::config::{DatabaseType, Provider};
 use crate::payload::{
     DatabaseInfo, IndexMetadata, IndexStats, Payload, QueryStats, SchemaMetadata,
     TableMetadata, TableStats,
@@ -267,6 +267,10 @@ impl Collector for PostgresCollector {
 
     fn version(&self) -> Option<&str> {
         self.version.as_deref()
+    }
+
+    fn database_type(&self) -> DatabaseType {
+        DatabaseType::Postgres
     }
 }
 
