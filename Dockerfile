@@ -25,7 +25,7 @@ COPY src ./src
 RUN touch src/main.rs src/lib.rs
 
 # Build the actual application
-RUN cargo build --release --locked
+RUN cargo build --release
 
 # Runtime stage
 FROM alpine:3.21
