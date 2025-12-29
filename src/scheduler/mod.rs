@@ -58,9 +58,12 @@ impl Scheduler {
             "Starting metrics collection scheduler"
         );
 
-        // Add jitter to prevent thundering herd
-        let jitter = Duration::from_millis(rand::random::<u64>() % 5000);
-        tokio::time::sleep(jitter).await;
+        // Add jitter to prevent thundering herd (use system time as simple randomness)
+        let jitter_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_millis() as u64 % 5000)
+            .unwrap_or(0);
+        tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
 
         let mut interval = interval(self.interval);
         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -134,20 +137,6 @@ impl Scheduler {
         }
 
         Ok(())
-    }
-}
-
-// Simple random number for jitter - avoid pulling in full rand crate
-mod rand {
-    pub fn random<T: Default>() -> T {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos();
-
-        // This is a simplification - in real code use proper random
-        unsafe { std::mem::transmute_copy(&nanos) }
     }
 }
 

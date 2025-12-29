@@ -25,6 +25,7 @@ use tracing::{debug, info, warn};
 /// PostgreSQL metrics collector
 pub struct PostgresCollector {
     pool: PgPool,
+    #[allow(dead_code)]
     provider: Provider,
     detected_provider: String,
     version: Option<String>,
