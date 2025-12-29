@@ -166,6 +166,17 @@ GRANT EXECUTE ON FUNCTION pg_stat_statements_reset TO datapace_agent;
 | **YugabyteDB** | Works* | Generic, Yugabyte Cloud (*PostgreSQL-compatible) |
 | **TiDB** | Planned | Generic, TiDB Cloud (MySQL-compatible) |
 
+### Vector Databases
+
+| Database | Status | Cloud Providers |
+|----------|--------|-----------------|
+| **pgvector** | Works* | PostgreSQL + pgvector extension (*PostgreSQL-compatible) |
+| **Pinecone** | Planned | Pinecone |
+| **Milvus** | Planned | Generic, Zilliz Cloud |
+| **Weaviate** | Planned | Generic, Weaviate Cloud |
+| **Qdrant** | Planned | Generic, Qdrant Cloud |
+| **Chroma** | Planned | Generic |
+
 > **Note**: Databases marked "Works*" use the PostgreSQL collector as they are wire-compatible.
 
 ### Database-Agnostic Metrics
@@ -283,6 +294,7 @@ The collector architecture makes it easy to add new databases:
 | Key-Value | Redis, DynamoDB |
 | Time-Series | InfluxDB |
 | NewSQL | TiDB |
+| Vector | Pinecone, Milvus, Weaviate, Qdrant, Chroma |
 
 ### Development Setup
 

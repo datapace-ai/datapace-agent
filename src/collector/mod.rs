@@ -266,6 +266,43 @@ pub async fn create_collector(
                 "InfluxDB support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
             ))
         }
+
+        // Coming soon - Vector databases
+        DatabaseType::Pinecone => {
+            Err(CollectorError::UnsupportedDatabase(
+                "Pinecone support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Milvus => {
+            Err(CollectorError::UnsupportedDatabase(
+                "Milvus support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Weaviate => {
+            Err(CollectorError::UnsupportedDatabase(
+                "Weaviate support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Qdrant => {
+            Err(CollectorError::UnsupportedDatabase(
+                "Qdrant support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Chroma => {
+            Err(CollectorError::UnsupportedDatabase(
+                "Chroma support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
+            ))
+        }
+
+        DatabaseType::Pgvector => {
+            // pgvector is a PostgreSQL extension, use PostgreSQL collector
+            let collector = postgres::PostgresCollector::new(database_url, provider).await?;
+            Ok(Box::new(collector))
+        }
     }
 }
 

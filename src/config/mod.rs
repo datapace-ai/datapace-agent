@@ -66,6 +66,14 @@ pub enum DatabaseType {
     Cockroachdb,
     Yugabytedb,
     Tidb,
+
+    // Vector databases
+    Pinecone,
+    Milvus,
+    Weaviate,
+    Qdrant,
+    Chroma,
+    Pgvector,  // PostgreSQL extension
 }
 
 impl DatabaseType {
@@ -171,8 +179,31 @@ impl DatabaseType {
             return Ok(DatabaseType::Influxdb);
         }
 
+        // Vector databases
+        if url_lower.contains("pinecone.io") || url_lower.contains("pinecone") {
+            return Ok(DatabaseType::Pinecone);
+        }
+
+        if url_lower.contains("milvus") || url_lower.starts_with("milvus://") {
+            return Ok(DatabaseType::Milvus);
+        }
+
+        if url_lower.contains("weaviate") {
+            return Ok(DatabaseType::Weaviate);
+        }
+
+        if url_lower.contains("qdrant") {
+            return Ok(DatabaseType::Qdrant);
+        }
+
+        if url_lower.contains("chroma") {
+            return Ok(DatabaseType::Chroma);
+        }
+
+        // pgvector is detected via PostgreSQL URL + extension check at runtime
+
         Err(ConfigError::UnsupportedDatabase(format!(
-            "Unable to detect database type from URL. Supported databases: PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, DB2, Redis, Elasticsearch, ClickHouse, Cosmos DB, Couchbase, Snowflake, BigQuery, Redshift, DynamoDB, InfluxDB, TimescaleDB, CockroachDB, YugabyteDB, TiDB"
+            "Unable to detect database type from URL. Supported databases: PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, DB2, Redis, Elasticsearch, ClickHouse, Cosmos DB, Couchbase, Snowflake, BigQuery, Redshift, DynamoDB, InfluxDB, TimescaleDB, CockroachDB, YugabyteDB, TiDB, Pinecone, Milvus, Weaviate, Qdrant, Chroma"
         )))
     }
 
@@ -199,6 +230,12 @@ impl DatabaseType {
             DatabaseType::Cockroachdb => &["postgres://", "postgresql://"],
             DatabaseType::Yugabytedb => &["postgres://", "postgresql://"],
             DatabaseType::Tidb => &["mysql://"],
+            DatabaseType::Pinecone => &["https://"],
+            DatabaseType::Milvus => &["milvus://", "https://"],
+            DatabaseType::Weaviate => &["https://"],
+            DatabaseType::Qdrant => &["https://", "http://"],
+            DatabaseType::Chroma => &["https://", "http://"],
+            DatabaseType::Pgvector => &["postgres://", "postgresql://"],
         }
     }
 
@@ -229,6 +266,13 @@ impl DatabaseType {
             DatabaseType::Timescaledb | DatabaseType::Influxdb => "Time-Series",
 
             DatabaseType::Cockroachdb | DatabaseType::Yugabytedb | DatabaseType::Tidb => "NewSQL",
+
+            DatabaseType::Pinecone
+            | DatabaseType::Milvus
+            | DatabaseType::Weaviate
+            | DatabaseType::Qdrant
+            | DatabaseType::Chroma
+            | DatabaseType::Pgvector => "Vector",
         }
     }
 }
@@ -256,6 +300,12 @@ impl std::fmt::Display for DatabaseType {
             DatabaseType::Cockroachdb => write!(f, "cockroachdb"),
             DatabaseType::Yugabytedb => write!(f, "yugabytedb"),
             DatabaseType::Tidb => write!(f, "tidb"),
+            DatabaseType::Pinecone => write!(f, "pinecone"),
+            DatabaseType::Milvus => write!(f, "milvus"),
+            DatabaseType::Weaviate => write!(f, "weaviate"),
+            DatabaseType::Qdrant => write!(f, "qdrant"),
+            DatabaseType::Chroma => write!(f, "chroma"),
+            DatabaseType::Pgvector => write!(f, "pgvector"),
         }
     }
 }
