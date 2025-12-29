@@ -13,23 +13,35 @@ The Datapace Agent is a lightweight daemon that collects database metrics and se
 ## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   User's Environment                 │
-│  ┌───────────────────────────────────────────────┐  │
-│  │            datapace-agent (Docker)            │  │
-│  │  ┌─────────┐  ┌──────────┐  ┌─────────────┐  │  │
-│  │  │Collector│→ │ Payload  │→ │  Uploader   │  │  │
-│  │  │         │  │          │  │ (to Cloud)  │  │  │
-│  │  └────┬────┘  └──────────┘  └──────┬──────┘  │  │
-│  └───────│───────────────────────────│──────────┘  │
-│          │                           │              │
-│          ▼                           │              │
-│  ┌───────────────┐                   │              │
-│  │   PostgreSQL  │                   │              │
-│  │  (RDS/Aurora/ │                   │              │
-│  │  Supabase/etc)│                   │              │
-│  └───────────────┘                   │              │
-└──────────────────────────────────────│──────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         datapace-agent                           │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                    Collector Factory                      │   │
+│  │              create_collector(db_type, url)               │   │
+│  └─────────────────────────┬────────────────────────────────┘   │
+│                            │                                     │
+│          ┌─────────────────┼─────────────────┐                  │
+│          ▼                 ▼                 ▼                  │
+│   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐          │
+│   │  PostgreSQL │   │    MySQL    │   │   MongoDB   │          │
+│   │  Collector  │   │  Collector  │   │  Collector  │          │
+│   │   (stable)  │   │  (planned)  │   │  (planned)  │          │
+│   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘          │
+│          │                 │                 │                  │
+│          └─────────────────┼─────────────────┘                  │
+│                            ▼                                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │              Payload (Database-Agnostic)                  │   │
+│  │     query_stats, table_stats, index_stats, settings       │   │
+│  └─────────────────────────┬────────────────────────────────┘   │
+│                            │                                     │
+│                            ▼                                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                       Uploader                            │   │
+│  │              POST to api.datapace.ai/v1/ingest            │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
                                        │
                                        ▼ HTTPS
                           ┌────────────────────────┐
@@ -52,14 +64,19 @@ src/
 ├── main.rs           # CLI entry point, signal handling
 ├── lib.rs            # Library exports
 ├── config/           # Configuration loading (YAML, env vars)
+│   └── mod.rs        # DatabaseType, MetricType, Provider enums
 ├── collector/        # Database collectors
-│   ├── mod.rs        # Collector trait definition
-│   └── postgres/     # PostgreSQL implementation
+│   ├── mod.rs        # Collector trait & factory function
+│   ├── postgres/     # PostgreSQL implementation (stable)
+│   │   ├── mod.rs    # Main collector
+│   │   ├── queries.rs# SQL queries
+│   │   └── providers.rs # Provider detection
+│   └── mysql/        # MySQL implementation (skeleton)
 │       ├── mod.rs    # Main collector
 │       ├── queries.rs# SQL queries
 │       └── providers.rs # Provider detection
 ├── payload/          # Data normalization
-│   └── mod.rs        # Payload schema
+│   └── mod.rs        # Database-agnostic payload schema
 ├── uploader/         # Cloud API client
 │   └── mod.rs        # HTTP client with retry logic
 └── scheduler/        # Collection loop
@@ -73,17 +90,56 @@ src/
 ```rust
 #[async_trait]
 pub trait Collector: Send + Sync {
+    /// Collect all metrics and return a normalized payload
     async fn collect(&self) -> Result<Payload, CollectorError>;
+
+    /// Test the database connection
     async fn test_connection(&self) -> Result<(), CollectorError>;
+
+    /// Get the detected cloud provider (e.g., "rds", "neon", "generic")
     fn provider(&self) -> &str;
+
+    /// Get the database version
     fn version(&self) -> Option<&str>;
+
+    /// Get the database type (Postgres, MySQL, MongoDB, etc.)
+    fn database_type(&self) -> DatabaseType;
 }
 ```
 
 All database collectors implement this trait, allowing for:
 - Uniform collection interface
+- Database type auto-detection from URL
 - Easy addition of new databases
 - Provider-specific optimizations
+
+### Collector Factory
+
+```rust
+pub async fn create_collector(
+    database_url: &str,
+    provider: Provider,
+) -> Result<Box<dyn Collector>, CollectorError> {
+    // Auto-detect database type from URL scheme
+    let db_type = DatabaseType::from_url(database_url)?;
+
+    match db_type {
+        DatabaseType::Postgres => { /* create PostgresCollector */ },
+        DatabaseType::Mysql => { /* create MySQLCollector */ },
+        DatabaseType::Mongodb => { /* create MongoDBCollector */ },
+    }
+}
+```
+
+### Database-Agnostic Metrics
+
+| MetricType | Description | PostgreSQL | MySQL |
+|------------|-------------|------------|-------|
+| `query_stats` | Query performance | pg_stat_statements | performance_schema |
+| `table_stats` | Table statistics | pg_stat_user_tables | information_schema |
+| `index_stats` | Index usage | pg_stat_user_indexes | information_schema |
+| `settings` | Configuration | pg_settings | SHOW VARIABLES |
+| `schema_metadata` | Schema structure | information_schema | information_schema |
 
 ### Payload Schema
 
@@ -109,18 +165,19 @@ The normalized payload structure:
 
 ### Provider Detection
 
-The agent auto-detects database providers:
+The agent auto-detects cloud providers for each database type:
 
 1. **URL patterns**: Check connection string for provider hints
-2. **Extensions**: Query `pg_extension` for provider-specific extensions
-3. **Settings**: Check for provider-specific GUC parameters
+2. **Extensions/Variables**: Query database for provider-specific features
+3. **Settings**: Check for provider-specific configuration parameters
 
-Supported providers:
-- Generic PostgreSQL
-- AWS RDS
-- AWS Aurora
-- Supabase
-- Neon
+**Supported Providers by Database:**
+
+| Database | Providers |
+|----------|-----------|
+| PostgreSQL | Generic, AWS RDS, AWS Aurora, Supabase, Neon |
+| MySQL | Generic, AWS RDS, AWS Aurora, Google Cloud SQL, Azure, PlanetScale |
+| MongoDB | Generic, MongoDB Atlas, AWS DocumentDB (planned) |
 
 ## Technology Choices
 
@@ -152,24 +209,38 @@ Supported providers:
 
 ## Extensibility
 
+For detailed instructions, see **[EXTENDING.md](EXTENDING.md)**.
+
 ### Adding a New Database
 
-1. Create a new module: `src/collector/mysql/`
-2. Implement the `Collector` trait
-3. Add provider detection logic
-4. Update the factory function
-5. Add configuration options
+1. Create a new module: `src/collector/{database}/`
+2. Implement the `Collector` trait with all required methods
+3. Add provider detection logic for cloud variants
+4. Update the factory function in `src/collector/mod.rs`
+5. Add `DatabaseType` variant to `src/config/mod.rs`
+6. Add URL validation
+7. Write tests
 
 ### Adding New Metrics
 
-1. Add query to `queries.rs`
-2. Add fields to payload structs
-3. Update collector to call new query
-4. Add configuration option to enable/disable
+1. Add to `MetricType` enum in `src/config/mod.rs`
+2. Add fields to payload structs in `src/payload/mod.rs`
+3. Add query to `queries.rs` for each database
+4. Update collector to call new query
+5. Add configuration option to enable/disable
+
+### Adding New Cloud Providers
+
+1. Update provider detection in `providers.rs`
+2. Add URL pattern matching for the provider
+3. Optionally collect provider-specific metadata
+4. Update `Provider` enum in config
 
 ## Future Considerations
 
-- **MySQL support**: Add MySQL collector
+- **MySQL support**: Complete MySQL collector implementation
+- **MongoDB support**: Add MongoDB collector
+- **Redis support**: Add Redis collector
 - **Query plans**: Collect EXPLAIN output for slow queries
 - **Schema diff**: Detect and report schema changes
 - **Custom metrics**: User-defined SQL queries

@@ -164,37 +164,60 @@ datapace-agent/
 │   ├── main.rs          # CLI entry point
 │   ├── lib.rs           # Library root
 │   ├── config/          # Configuration management
+│   │   └── mod.rs       # DatabaseType, MetricType, Provider enums
 │   ├── collector/       # Database collectors
-│   │   └── postgres/    # PostgreSQL implementation
+│   │   ├── mod.rs       # Collector trait & factory
+│   │   ├── postgres/    # PostgreSQL implementation (stable)
+│   │   └── mysql/       # MySQL implementation (skeleton)
 │   ├── payload/         # Data structures for API
 │   ├── uploader/        # Cloud API client
 │   └── scheduler/       # Collection scheduler
 ├── configs/             # Example configurations
 ├── docs/                # Documentation
-└── tests/               # Integration tests
+│   └── EXTENDING.md     # Guide for adding new databases
+└── tests/
+    └── integration/     # Integration tests
 ```
 
 ## Adding a New Database Collector
 
+For detailed instructions, see **[EXTENDING.md](EXTENDING.md)**.
+
+Quick summary:
+
 1. Create a new module under `src/collector/`:
    ```
    src/collector/mysql/
-   ├── mod.rs
-   ├── queries.rs
-   └── providers.rs
+   ├── mod.rs           # Main collector implementing Collector trait
+   ├── queries.rs       # SQL queries for metrics
+   └── providers.rs     # Cloud provider detection
    ```
 
-2. Implement the `Collector` trait
+2. Implement the `Collector` trait with these methods:
+   - `collect()` - Gather all metrics
+   - `test_connection()` - Verify database connectivity
+   - `provider()` - Return detected cloud provider
+   - `version()` - Return database version
+   - `database_type()` - Return DatabaseType enum variant
 
-3. Add provider detection logic
+3. Add provider detection for cloud variants (RDS, Cloud SQL, Azure, etc.)
 
-4. Update `create_collector()` factory function
+4. Update `create_collector()` factory in `src/collector/mod.rs`
 
-5. Add configuration options
+5. Add configuration options and URL validation
 
-6. Write tests
+6. Write unit tests and integration tests
 
-7. Update documentation
+7. Update documentation (README, ARCHITECTURE.md)
+
+### Databases We'd Love Help With
+
+- MySQL / MariaDB (skeleton exists at `src/collector/mysql/`)
+- MongoDB
+- Redis
+- Microsoft SQL Server
+- ClickHouse
+- CockroachDB
 
 ## Questions?
 
