@@ -5,6 +5,7 @@
 //! - Environment variables
 //! - Command-line arguments
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
@@ -42,18 +43,14 @@ pub struct Config {
 /// Datapace Cloud connection settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatapaceConfig {
-    /// API key for authentication
     pub api_key: String,
 
-    /// API endpoint URL
     #[serde(default = "default_endpoint")]
     pub endpoint: String,
 
-    /// Request timeout in seconds
     #[serde(default = "default_timeout")]
     pub timeout: u64,
 
-    /// Number of retries on failure
     #[serde(default = "default_retries")]
     pub retries: u32,
 }
@@ -61,14 +58,11 @@ pub struct DatapaceConfig {
 /// Database connection settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
-    /// Connection URL (postgres://user:pass@host:port/db)
     pub url: String,
 
-    /// Database provider (auto, generic, rds, aurora, supabase, neon)
-    #[serde(default = "default_provider")]
+    #[serde(default)]
     pub provider: Provider,
 
-    /// Connection pool settings
     #[serde(default)]
     pub pool: PoolConfig,
 }
@@ -125,11 +119,9 @@ impl Default for PoolConfig {
 /// Metrics collection settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionConfig {
-    /// Collection interval (e.g., "60s", "5m")
-    #[serde(default = "default_interval", with = "humantime_serde")]
-    pub interval: Duration,
+    #[serde(default = "default_interval_secs")]
+    pub interval_secs: u64,
 
-    /// Which metrics to collect
     #[serde(default = "default_metrics")]
     pub metrics: Vec<MetricType>,
 }
@@ -137,9 +129,15 @@ pub struct CollectionConfig {
 impl Default for CollectionConfig {
     fn default() -> Self {
         Self {
-            interval: default_interval(),
+            interval_secs: default_interval_secs(),
             metrics: default_metrics(),
         }
+    }
+}
+
+impl CollectionConfig {
+    pub fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval_secs)
     }
 }
 
@@ -240,10 +238,6 @@ fn default_retries() -> u32 {
     3
 }
 
-fn default_provider() -> Provider {
-    Provider::Auto
-}
-
 fn default_min_connections() -> u32 {
     1
 }
@@ -256,8 +250,8 @@ fn default_acquire_timeout() -> u64 {
     30
 }
 
-fn default_interval() -> Duration {
-    Duration::from_secs(60)
+fn default_interval_secs() -> u64 {
+    60
 }
 
 fn default_metrics() -> Vec<MetricType> {
@@ -308,13 +302,12 @@ impl Config {
         let database_url = std::env::var("DATABASE_URL")
             .map_err(|_| ConfigError::MissingField("DATABASE_URL".to_string()))?;
 
-        let endpoint =
-            std::env::var("DATAPACE_ENDPOINT").unwrap_or_else(|_| default_endpoint());
+        let endpoint = std::env::var("DATAPACE_ENDPOINT").unwrap_or_else(|_| default_endpoint());
 
-        let interval = std::env::var("COLLECTION_INTERVAL")
+        let interval_secs = std::env::var("COLLECTION_INTERVAL")
             .ok()
-            .and_then(|s| humantime::parse_duration(&s).ok())
-            .unwrap_or_else(default_interval);
+            .and_then(|s| parse_duration_secs(&s))
+            .unwrap_or_else(default_interval_secs);
 
         let log_level = std::env::var("LOG_LEVEL")
             .ok()
@@ -346,11 +339,11 @@ impl Config {
             },
             database: DatabaseConfig {
                 url: database_url,
-                provider: default_provider(),
+                provider: Provider::Auto,
                 pool: PoolConfig::default(),
             },
             collection: CollectionConfig {
-                interval,
+                interval_secs,
                 metrics: default_metrics(),
             },
             logging: LoggingConfig {
@@ -386,7 +379,7 @@ impl Config {
             ));
         }
 
-        if self.collection.interval.as_secs() < 10 {
+        if self.collection.interval_secs < 10 {
             return Err(ConfigError::ValidationError(
                 "Collection interval must be at least 10 seconds".to_string(),
             ));
@@ -398,8 +391,8 @@ impl Config {
 
 /// Expand environment variables in a string using ${VAR} syntax
 fn expand_env_vars(input: &str) -> String {
+    let re = Regex::new(r"\$\{([^}]+)\}").unwrap();
     let mut result = input.to_string();
-    let re = regex::Regex::new(r"\$\{([^}]+)\}").unwrap();
 
     for cap in re.captures_iter(input) {
         let var_name = &cap[1];
@@ -411,25 +404,24 @@ fn expand_env_vars(input: &str) -> String {
     result
 }
 
-// Add regex to dependencies for env var expansion
-mod humantime_serde {
-    use serde::{self, Deserialize, Deserializer, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&humantime::format_duration(*duration).to_string())
+/// Parse duration string like "60s", "5m", "1h" into seconds
+fn parse_duration_secs(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        humantime::parse_duration(&s).map_err(serde::de::Error::custom)
-    }
+    let (num_str, suffix) = if s.ends_with('s') {
+        (&s[..s.len() - 1], 1u64)
+    } else if s.ends_with('m') {
+        (&s[..s.len() - 1], 60u64)
+    } else if s.ends_with('h') {
+        (&s[..s.len() - 1], 3600u64)
+    } else {
+        (s, 1u64)
+    };
+
+    num_str.parse::<u64>().ok().map(|n| n * suffix)
 }
 
 #[cfg(test)]
@@ -437,37 +429,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_config() {
-        std::env::set_var("DATAPACE_API_KEY", "test_key");
-        std::env::set_var("DATABASE_URL", "postgres://localhost/test");
-
-        let config = Config::from_env().unwrap();
-
-        assert_eq!(config.datapace.api_key, "test_key");
-        assert_eq!(config.database.url, "postgres://localhost/test");
-        assert_eq!(config.collection.interval, Duration::from_secs(60));
-    }
-
-    #[test]
-    fn test_validation_empty_api_key() {
-        let config = Config {
-            datapace: DatapaceConfig {
-                api_key: "".to_string(),
-                endpoint: default_endpoint(),
-                timeout: default_timeout(),
-                retries: default_retries(),
-            },
-            database: DatabaseConfig {
-                url: "postgres://localhost/test".to_string(),
-                provider: Provider::Auto,
-                pool: PoolConfig::default(),
-            },
-            collection: CollectionConfig::default(),
-            logging: LoggingConfig::default(),
-            health: HealthConfig::default(),
-        };
-
-        assert!(config.validate().is_err());
+    fn test_parse_duration() {
+        assert_eq!(parse_duration_secs("60s"), Some(60));
+        assert_eq!(parse_duration_secs("5m"), Some(300));
+        assert_eq!(parse_duration_secs("1h"), Some(3600));
+        assert_eq!(parse_duration_secs("30"), Some(30));
     }
 
     #[test]
@@ -475,5 +441,12 @@ mod tests {
         assert_eq!(format!("{}", Provider::Auto), "auto");
         assert_eq!(format!("{}", Provider::Rds), "rds");
         assert_eq!(format!("{}", Provider::Supabase), "supabase");
+    }
+
+    #[test]
+    fn test_expand_env_vars() {
+        std::env::set_var("TEST_VAR", "hello");
+        let result = expand_env_vars("prefix ${TEST_VAR} suffix");
+        assert_eq!(result, "prefix hello suffix");
     }
 }

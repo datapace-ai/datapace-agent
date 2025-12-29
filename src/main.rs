@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
         let scheduler = Scheduler::new(
             Arc::from(collector),
             Arc::new(uploader),
-            config.collection.interval,
+            config.collection.interval(),
             shutdown_rx,
         );
         return scheduler.run_once().await.map_err(Into::into);
@@ -111,12 +111,12 @@ async fn main() -> Result<()> {
     let mut scheduler = Scheduler::new(
         Arc::from(collector),
         Arc::new(uploader),
-        config.collection.interval,
+        config.collection.interval(),
         shutdown_rx,
     );
 
     info!(
-        interval_secs = config.collection.interval.as_secs(),
+        interval_secs = config.collection.interval().as_secs(),
         "Starting metrics collection loop"
     );
 
