@@ -253,7 +253,7 @@ docker run -e DATAPACE_API_KEY=key -e DATABASE_URL=postgres://... datapace-agent
 │   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐          │
 │   │  PostgreSQL │   │    MySQL    │   │   MongoDB   │          │
 │   │  Collector  │   │  Collector  │   │  Collector  │          │
-│   │   (stable)  │   │(coming soon)│   │  (planned)  │          │
+│   │   (stable)  │   │(coming soon)│   │   (stable)  │          │
 │   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘          │
 │          │                 │                 │                  │
 │          └─────────────────┼─────────────────┘                  │

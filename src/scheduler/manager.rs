@@ -1,6 +1,6 @@
 use crate::anonymizer;
-use crate::collector::capability::Capabilities;
-use crate::collector::pool::{DatabasePool, PostgresPool};
+use crate::collector::capability::{Capabilities, CapabilitySet, MongoCapabilities};
+use crate::collector::pool::{DatabasePool, MongoDbPool, PostgresPool};
 use crate::collector::registry;
 use crate::collector::Collector;
 use crate::store::{DatabaseEntry, PipelineEvent, QueryFingerprint, ShippingEntry, Store};
@@ -179,14 +179,27 @@ impl SchedulerManager {
     }
 }
 
-/// The main loop for a single database.
+/// The main loop for a single database. Dispatches to the correct scheduler
+/// based on `entry.db_type`.
 async fn run_db_scheduler(
     store: Arc<Store>,
     entry: DatabaseEntry,
     status: Arc<RwLock<DbStatus>>,
-    mut shutdown_rx: watch::Receiver<bool>,
+    shutdown_rx: watch::Receiver<bool>,
 ) {
-    // Connect to PostgreSQL
+    match entry.db_type.as_str() {
+        "mongodb" => run_mongodb_scheduler(store, entry, status, shutdown_rx).await,
+        _ => run_postgres_scheduler(store, entry, status, shutdown_rx).await,
+    }
+}
+
+/// PostgreSQL-specific scheduler loop.
+async fn run_postgres_scheduler(
+    store: Arc<Store>,
+    entry: DatabaseEntry,
+    status: Arc<RwLock<DbStatus>>,
+    shutdown_rx: watch::Receiver<bool>,
+) {
     let pg_pool = match PgPoolOptions::new()
         .min_connections(1)
         .max_connections(entry.pool_size)
@@ -206,9 +219,8 @@ async fn run_db_scheduler(
         }
     };
 
-    // Probe capabilities
     let capabilities = match Capabilities::probe(&pg_pool).await {
-        Ok(caps) => caps,
+        Ok(caps) => CapabilitySet::Postgres(caps),
         Err(e) => {
             let err_msg = format!("Capability probe failed: {e}");
             error!(db = %entry.id, error = %e, "Failed to probe capabilities");
@@ -220,10 +232,85 @@ async fn run_db_scheduler(
         }
     };
 
-    // Wrap the raw PgPool in the DatabasePool abstraction
     let pool: Arc<dyn DatabasePool> = Arc::new(PostgresPool(pg_pool));
+    run_collection_loop(store, entry, pool, capabilities, status, shutdown_rx).await;
+}
 
-    info!(db = %entry.id, "Database scheduler started");
+/// MongoDB-specific scheduler loop.
+async fn run_mongodb_scheduler(
+    store: Arc<Store>,
+    entry: DatabaseEntry,
+    status: Arc<RwLock<DbStatus>>,
+    shutdown_rx: watch::Receiver<bool>,
+) {
+    let client_options = match mongodb::options::ClientOptions::parse(&entry.url).await {
+        Ok(opts) => opts,
+        Err(e) => {
+            let err_msg = format!("Invalid MongoDB URL: {e}");
+            error!(db = %entry.id, error = %e, "Failed to parse MongoDB connection string");
+            let mut s = status.write().await;
+            s.status = "error".into();
+            s.error = Some(err_msg);
+            store.update_database_status(&entry.id, "error").await.ok();
+            return;
+        }
+    };
+
+    let client = match mongodb::Client::with_options(client_options) {
+        Ok(c) => c,
+        Err(e) => {
+            let err_msg = format!("MongoDB client creation failed: {e}");
+            error!(db = %entry.id, error = %e, "Failed to create MongoDB client");
+            let mut s = status.write().await;
+            s.status = "error".into();
+            s.error = Some(err_msg);
+            store.update_database_status(&entry.id, "error").await.ok();
+            return;
+        }
+    };
+
+    // Extract database name from URL (default to "admin" if not specified)
+    let db_name = extract_mongo_db_name(&entry.url).unwrap_or_else(|| "admin".into());
+    let mongo_db = client.database(&db_name);
+
+    // Ping to verify connection
+    if let Err(e) = mongo_db.run_command(bson::doc! { "ping": 1 }, None).await {
+        let err_msg = format!("MongoDB ping failed: {e}");
+        error!(db = %entry.id, error = %e, "Failed to connect to MongoDB");
+        let mut s = status.write().await;
+        s.status = "error".into();
+        s.error = Some(err_msg);
+        store.update_database_status(&entry.id, "error").await.ok();
+        return;
+    }
+
+    let capabilities = match MongoCapabilities::probe(&client, &mongo_db).await {
+        Ok(caps) => CapabilitySet::MongoDB(caps),
+        Err(e) => {
+            let err_msg = format!("Capability probe failed: {e}");
+            error!(db = %entry.id, error = %e, "Failed to probe MongoDB capabilities");
+            let mut s = status.write().await;
+            s.status = "error".into();
+            s.error = Some(err_msg);
+            store.update_database_status(&entry.id, "error").await.ok();
+            return;
+        }
+    };
+
+    let pool: Arc<dyn DatabasePool> = Arc::new(MongoDbPool { client, db_name });
+    run_collection_loop(store, entry, pool, capabilities, status, shutdown_rx).await;
+}
+
+/// Shared collection loop used by both Postgres and MongoDB schedulers.
+async fn run_collection_loop(
+    store: Arc<Store>,
+    entry: DatabaseEntry,
+    pool: Arc<dyn DatabasePool>,
+    capabilities: CapabilitySet,
+    status: Arc<RwLock<DbStatus>>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    info!(db = %entry.id, db_type = %entry.db_type, "Database scheduler started");
     {
         let mut s = status.write().await;
         s.status = "running".into();
@@ -267,12 +354,26 @@ async fn run_db_scheduler(
     }
 }
 
+/// Extract database name from a MongoDB connection string.
+fn extract_mongo_db_name(url: &str) -> Option<String> {
+    // mongodb+srv://user:pass@host/dbname?options
+    // mongodb://user:pass@host:port/dbname?options
+    let after_scheme = url.split("://").nth(1)?;
+    let after_host = after_scheme.split('/').nth(1)?;
+    let db_name = after_host.split('?').next().unwrap_or(after_host);
+    if db_name.is_empty() {
+        None
+    } else {
+        Some(db_name.to_string())
+    }
+}
+
 /// Run a single tick (fast or slow) for a database.
 async fn run_tick(
     store: &Store,
     entry: &DatabaseEntry,
     pool: &Arc<dyn DatabasePool>,
-    capabilities: &Capabilities,
+    capabilities: &CapabilitySet,
     status: &Arc<RwLock<DbStatus>>,
     tick_type: &str,
 ) {
@@ -376,7 +477,7 @@ async fn run_tick(
 
 /// Build the list of collectors for a tick based on the database's configuration.
 fn build_collectors(entry: &DatabaseEntry, tick_type: &str) -> Vec<Box<dyn Collector>> {
-    registry::build_collectors_for_tick(tick_type, &entry.collectors)
+    registry::build_collectors_for_tick(&entry.db_type, tick_type, &entry.collectors)
 }
 
 /// Ship collected data to a specific shipper destination.

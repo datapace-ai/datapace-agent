@@ -3,6 +3,7 @@ pub mod capability;
 pub mod explain;
 pub mod io;
 pub mod locks;
+pub mod mongodb;
 pub mod pool;
 pub mod registry;
 pub mod schema;
@@ -36,6 +37,23 @@ impl From<sqlx::Error> for CollectorError {
             }
             _ => CollectorError::Query(err.to_string()),
         }
+    }
+}
+
+impl From<::mongodb::error::Error> for CollectorError {
+    fn from(err: ::mongodb::error::Error) -> Self {
+        let msg = err.to_string();
+        if msg.contains("not authorized") || msg.contains("Unauthorized") {
+            CollectorError::Permission(msg)
+        } else {
+            CollectorError::Query(msg)
+        }
+    }
+}
+
+impl From<bson::de::Error> for CollectorError {
+    fn from(err: bson::de::Error) -> Self {
+        CollectorError::Query(format!("BSON deserialization error: {err}"))
     }
 }
 

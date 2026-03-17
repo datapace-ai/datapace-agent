@@ -1,3 +1,4 @@
+use bson::doc;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{info, warn};
@@ -160,6 +161,128 @@ async fn probe_schema_access(pool: &PgPool) -> bool {
     }
 }
 
+/// Detected MongoDB capabilities based on available commands and configuration.
+#[derive(Debug, Clone)]
+pub struct MongoCapabilities {
+    pub server_version: String,
+    caps: HashMap<String, bool>,
+}
+
+impl MongoCapabilities {
+    /// Probe the connected MongoDB instance for available capabilities.
+    pub async fn probe(
+        client: &mongodb::Client,
+        db: &mongodb::Database,
+    ) -> Result<Self, mongodb::error::Error> {
+        let admin = client.database("admin");
+
+        // Get server version from serverStatus
+        let server_version = match db.run_command(doc! { "serverStatus": 1 }, None).await {
+            Ok(doc) => doc.get_str("version").unwrap_or("unknown").to_string(),
+            Err(_) => "unknown".into(),
+        };
+
+        let mut caps = HashMap::new();
+
+        // server_status
+        caps.insert(
+            "server_status".into(),
+            db.run_command(doc! { "serverStatus": 1 }, None)
+                .await
+                .is_ok(),
+        );
+
+        // current_op
+        caps.insert(
+            "current_op".into(),
+            db.run_command(doc! { "currentOp": 1, "$all": false }, None)
+                .await
+                .is_ok(),
+        );
+
+        // profiler — check if profiling level >= 1
+        let profiler_enabled = match db.run_command(doc! { "profile": -1 }, None).await {
+            Ok(doc) => doc.get_i32("was").unwrap_or(0) >= 1,
+            Err(_) => false,
+        };
+        caps.insert("profiler".into(), profiler_enabled);
+
+        // repl_set
+        caps.insert(
+            "repl_set".into(),
+            admin
+                .run_command(doc! { "replSetGetStatus": 1 }, None)
+                .await
+                .is_ok(),
+        );
+
+        // top (admin-only, not available on Atlas shared tier)
+        caps.insert(
+            "top".into(),
+            admin.run_command(doc! { "top": 1 }, None).await.is_ok(),
+        );
+
+        // list_collections
+        caps.insert(
+            "list_collections".into(),
+            db.run_command(doc! { "listCollections": 1, "nameOnly": true }, None)
+                .await
+                .is_ok(),
+        );
+
+        let result = Self {
+            server_version,
+            caps,
+        };
+        result.print_table();
+        Ok(result)
+    }
+
+    /// Create capabilities from a list of (name, available) pairs. Useful for tests.
+    pub fn from_probes(server_version: &str, probes: Vec<(&str, bool)>) -> Self {
+        let caps = probes
+            .into_iter()
+            .map(|(name, available)| (name.to_string(), available))
+            .collect();
+        Self {
+            server_version: server_version.to_string(),
+            caps,
+        }
+    }
+
+    /// Check if a named capability is available.
+    pub fn has(&self, name: &str) -> bool {
+        self.caps.get(name).copied().unwrap_or(false)
+    }
+
+    fn print_table(&self) {
+        info!("MongoDB v{}", self.server_version);
+        let mut keys: Vec<_> = self.caps.keys().collect();
+        keys.sort();
+        for name in keys {
+            let available = self.caps[name];
+            let status = if available { "OK" } else { "n/a" };
+            info!("  {:<25} {}", name, status);
+        }
+    }
+}
+
+/// Unified capability set for any database type.
+#[derive(Debug, Clone)]
+pub enum CapabilitySet {
+    Postgres(Capabilities),
+    MongoDB(MongoCapabilities),
+}
+
+impl CapabilitySet {
+    pub fn has(&self, name: &str) -> bool {
+        match self {
+            Self::Postgres(c) => c.has(name),
+            Self::MongoDB(c) => c.has(name),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +313,42 @@ mod tests {
         assert_eq!(caps.server_version, 150000);
         assert!(caps.has("custom_ext"));
         assert!(!caps.has("pg_stat_statements"));
+    }
+
+    #[test]
+    fn mongo_capability_has() {
+        let caps = MongoCapabilities::from_probes(
+            "7.0.0",
+            vec![
+                ("server_status", true),
+                ("current_op", true),
+                ("profiler", false),
+                ("repl_set", true),
+                ("top", false),
+                ("list_collections", true),
+            ],
+        );
+        assert!(caps.has("server_status"));
+        assert!(caps.has("current_op"));
+        assert!(!caps.has("profiler"));
+        assert!(!caps.has("top"));
+        assert!(!caps.has("unknown"));
+    }
+
+    #[test]
+    fn capability_set_delegates() {
+        let pg = CapabilitySet::Postgres(Capabilities::from_probes(
+            160001,
+            vec![("pg_stat_statements", true)],
+        ));
+        assert!(pg.has("pg_stat_statements"));
+        assert!(!pg.has("server_status"));
+
+        let mongo = CapabilitySet::MongoDB(MongoCapabilities::from_probes(
+            "7.0.0",
+            vec![("server_status", true)],
+        ));
+        assert!(mongo.has("server_status"));
+        assert!(!mongo.has("pg_stat_statements"));
     }
 }

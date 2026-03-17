@@ -60,3 +60,34 @@ pub fn require_postgres(pool: &dyn DatabasePool) -> Result<&sqlx::PgPool, Collec
             CollectorError::NotAvailable(format!("requires PostgreSQL, got {}", pool.db_type()))
         })
 }
+
+/// Wraps a [`mongodb::Client`] as a [`DatabasePool`].
+pub struct MongoDbPool {
+    pub client: mongodb::Client,
+    pub db_name: String,
+}
+
+impl MongoDbPool {
+    pub fn database(&self) -> mongodb::Database {
+        self.client.database(&self.db_name)
+    }
+}
+
+#[async_trait]
+impl DatabasePool for MongoDbPool {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn db_type(&self) -> &'static str {
+        "mongodb"
+    }
+}
+
+/// Downcast a [`DatabasePool`] to a [`MongoDbPool`] reference, or return
+/// [`CollectorError::NotAvailable`] if the pool is not MongoDB.
+pub fn require_mongodb(pool: &dyn DatabasePool) -> Result<&MongoDbPool, CollectorError> {
+    pool.as_any().downcast_ref::<MongoDbPool>().ok_or_else(|| {
+        CollectorError::NotAvailable(format!("requires MongoDB, got {}", pool.db_type()))
+    })
+}

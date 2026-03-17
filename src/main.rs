@@ -212,6 +212,46 @@ async fn main() -> Result<()> {
         }
     }
 
+    // If config has a [mongodb] section, pre-seed MongoDB entry
+    if let Some(ref config) = config {
+        if let Some(ref mongo_config) = config.mongodb {
+            let db_name = config
+                .agent
+                .name
+                .clone()
+                .map(|n| format!("{n}-mongo"))
+                .unwrap_or_else(|| "default-mongo".into());
+            let db_id = format!("config-{}", slug(&db_name));
+
+            if store.get_database(&db_id).await?.is_none() {
+                let all_collectors =
+                    datapace_agent::collector::registry::all_collector_names_for("mongodb")
+                        .into_iter()
+                        .map(String::from)
+                        .collect();
+
+                let entry = DatabaseEntry {
+                    id: db_id.clone(),
+                    name: db_name,
+                    url: mongo_config.url.clone(),
+                    db_type: "mongodb".into(),
+                    environment: "production".into(),
+                    pool_size: 1,
+                    fast_interval: mongo_config.fast_interval,
+                    slow_interval: mongo_config.slow_interval,
+                    collectors: all_collectors,
+                    anonymize: false,
+                    shippers: vec![],
+                    status: "stopped".into(),
+                    created_at: chrono::Utc::now(),
+                };
+
+                store.insert_database(&entry).await.ok();
+                info!(id = %db_id, "Pre-seeded MongoDB database from TOML config");
+            }
+        }
+    }
+
     // Boot all databases from SQLite
     let databases = store.list_databases().await.unwrap_or_default();
     info!(count = databases.len(), "Loading databases from store");

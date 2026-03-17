@@ -39,10 +39,10 @@
     <div class="form-row">
       <div>
         <label>Database type</label>
-        <select id="db-type">
+        <select id="db-type" onchange="onDbTypeChange()">
           <option value="postgres">PostgreSQL</option>
           <option value="mysql" disabled>MySQL (coming soon)</option>
-          <option value="mongodb" disabled>MongoDB (coming soon)</option>
+          <option value="mongodb">MongoDB</option>
         </select>
       </div>
       <div>

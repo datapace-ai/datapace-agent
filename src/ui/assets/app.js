@@ -70,6 +70,32 @@ function dbIcon(dbType) { return DB_ICONS[dbType] || DB_ICONS.postgres; }
 
 const ENV_LABELS = { production: 'PROD', staging: 'STG', development: 'DEV', local: 'LOCAL' };
 
+// Collectors per database type
+const COLLECTORS_BY_TYPE = {
+  postgres: [
+    { name: 'statements', checked: true },
+    { name: 'activity', checked: true },
+    { name: 'locks', checked: true },
+    { name: 'explain', checked: false },
+    { name: 'tables', checked: true },
+    { name: 'schema', checked: true },
+    { name: 'io', checked: false },
+  ],
+  mongodb: [
+    { name: 'mongo_server_status', checked: true },
+    { name: 'mongo_current_ops', checked: true },
+    { name: 'mongo_slow_queries', checked: true },
+    { name: 'mongo_top', checked: true },
+    { name: 'mongo_collections', checked: true },
+    { name: 'mongo_repl_status', checked: true },
+  ],
+};
+
+const URL_PLACEHOLDERS = {
+  postgres: 'postgres://user:pass@host:5432/dbname',
+  mongodb: 'mongodb+srv://user:pass@cluster.example.net/dbname',
+};
+
 // === Monochrome SVG Icons ===
 
 const ICON = {
@@ -647,14 +673,14 @@ function openDrawer(id) {
       $('#drawer-title').textContent = 'Edit Database';
       $('#edit-id').value = id;
       $('#db-name').value = db.name;
-      $('#db-type').value = db.db_type || 'postgres';
+      const dbType = db.db_type || 'postgres';
+      $('#db-type').value = dbType;
       $('#db-env').value = db.environment || 'production';
       $('#db-url').value = db.url;
+      $('#db-url').placeholder = URL_PLACEHOLDERS[dbType] || URL_PLACEHOLDERS.postgres;
       $('#db-fast').value = db.fast_interval;
       $('#db-slow').value = db.slow_interval;
-      $$('#collectors-group input[type="checkbox"]').forEach(cb => {
-        cb.checked = db.collectors.includes(cb.value);
-      });
+      renderCollectorCheckboxes(dbType, db.collectors);
       $('#anon-enabled').checked = db.anonymize !== false;
       updateAnonHint();
       $('#btn-delete').style.display = 'inline-flex';
@@ -677,17 +703,37 @@ function resetDrawer() {
   $('#db-type').value = 'postgres';
   $('#db-env').value = 'production';
   $('#db-url').value = '';
+  $('#db-url').placeholder = URL_PLACEHOLDERS.postgres;
   $('#db-fast').value = '30';
   $('#db-slow').value = '300';
-  $$('#collectors-group input[type="checkbox"]').forEach(cb => {
-    cb.checked = ['statements', 'activity', 'locks', 'tables', 'schema'].includes(cb.value);
-  });
+  renderCollectorCheckboxes('postgres');
   $('#anon-enabled').checked = true;
   updateAnonHint();
   $('#test-result').className = 'test-result';
   $('#test-result').textContent = '';
   $('#btn-delete').style.display = 'none';
   editingId = null;
+}
+
+function onDbTypeChange() {
+  const dbType = $('#db-type').value;
+  // Update URL placeholder
+  $('#db-url').placeholder = URL_PLACEHOLDERS[dbType] || URL_PLACEHOLDERS.postgres;
+  // Swap collector checkboxes
+  renderCollectorCheckboxes(dbType);
+}
+
+function renderCollectorCheckboxes(dbType, selectedCollectors) {
+  const group = $('#collectors-group');
+  const collectors = COLLECTORS_BY_TYPE[dbType] || COLLECTORS_BY_TYPE.postgres;
+  let html = '';
+  for (const c of collectors) {
+    const checked = selectedCollectors
+      ? selectedCollectors.includes(c.name)
+      : c.checked;
+    html += `<label class="checkbox"><input type="checkbox" value="${c.name}" ${checked ? 'checked' : ''}> ${c.name}</label>`;
+  }
+  group.innerHTML = html;
 }
 
 function onEnvChange() {
@@ -715,6 +761,7 @@ function editDatabase(id) { openDrawer(id); }
 
 async function testConnection() {
   const url = $('#db-url').value;
+  const dbType = $('#db-type').value;
   const el = $('#test-result');
   el.className = 'test-result loading';
   el.textContent = 'Testing...';
@@ -722,7 +769,7 @@ async function testConnection() {
     const res = await fetchJSON('/api/test-connection', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, db_type: dbType }),
     });
     if (res.ok) {
       el.className = 'test-result success';
