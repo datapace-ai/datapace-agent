@@ -409,6 +409,13 @@ async fn run_tick(
                     _ => 1,
                 };
 
+                // Stamp idempotency key
+                snapshot.idempotency_key = anonymizer::idempotency_key(
+                    &entry.id,
+                    collector.name(),
+                    &snapshot.collected_at,
+                );
+
                 // Anonymize query text (if enabled for this database)
                 if entry.anonymize {
                     anonymize_snapshot_queries(&mut snapshot);

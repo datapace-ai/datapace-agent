@@ -52,6 +52,13 @@ impl Store {
         self.add_column_if_missing("metric_snapshots", "source_id", "TEXT NOT NULL DEFAULT ''")
             .await;
 
+        self.add_column_if_missing(
+            "metric_snapshots",
+            "idempotency_key",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        .await;
+
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_snapshots_source_collector_time
              ON metric_snapshots(source_id, collector, collected_at)",
@@ -462,12 +469,13 @@ impl Store {
         let data_str = serde_json::to_string(&snap.data).unwrap_or_default();
         let ts = snap.collected_at.to_rfc3339();
         sqlx::query(
-            "INSERT INTO metric_snapshots (source_id, collector, data, collected_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO metric_snapshots (source_id, collector, data, collected_at, idempotency_key) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(source_id)
         .bind(&snap.collector)
         .bind(&data_str)
         .bind(&ts)
+        .bind(&snap.idempotency_key)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -485,8 +493,8 @@ impl Store {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<Snapshot>, sqlx::Error> {
-        let rows: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT collector, data, collected_at
+        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+            "SELECT collector, data, collected_at, idempotency_key
              FROM metric_snapshots
              WHERE collector = ? AND collected_at >= ? AND collected_at <= ?
              ORDER BY collected_at ASC",
@@ -499,13 +507,14 @@ impl Store {
 
         Ok(rows
             .into_iter()
-            .filter_map(|(coll, data, ts)| {
+            .filter_map(|(coll, data, ts, key)| {
                 let collected_at = DateTime::parse_from_rfc3339(&ts).ok()?.with_timezone(&Utc);
                 let data: serde_json::Value = serde_json::from_str(&data).ok()?;
                 Some(Snapshot {
                     collector: coll,
                     data,
                     collected_at,
+                    idempotency_key: key,
                 })
             })
             .collect())
@@ -513,8 +522,8 @@ impl Store {
 
     /// Get the latest snapshot for each collector.
     pub async fn get_latest_snapshots(&self) -> Result<Vec<Snapshot>, sqlx::Error> {
-        let rows: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT collector, data, collected_at
+        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+            "SELECT collector, data, collected_at, idempotency_key
              FROM metric_snapshots
              WHERE id IN (
                 SELECT MAX(id) FROM metric_snapshots GROUP BY collector
@@ -525,13 +534,14 @@ impl Store {
 
         Ok(rows
             .into_iter()
-            .filter_map(|(coll, data, ts)| {
+            .filter_map(|(coll, data, ts, key)| {
                 let collected_at = DateTime::parse_from_rfc3339(&ts).ok()?.with_timezone(&Utc);
                 let data: serde_json::Value = serde_json::from_str(&data).ok()?;
                 Some(Snapshot {
                     collector: coll,
                     data,
                     collected_at,
+                    idempotency_key: key,
                 })
             })
             .collect())
@@ -543,8 +553,8 @@ impl Store {
         source_id: &str,
         collector: &str,
     ) -> Result<Option<Snapshot>, sqlx::Error> {
-        let row: Option<(String, String, String)> = sqlx::query_as(
-            "SELECT collector, data, collected_at
+        let row: Option<(String, String, String, String)> = sqlx::query_as(
+            "SELECT collector, data, collected_at, idempotency_key
              FROM metric_snapshots
              WHERE source_id = ? AND collector = ?
              ORDER BY collected_at DESC
@@ -555,13 +565,14 @@ impl Store {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.and_then(|(coll, data, ts)| {
+        Ok(row.and_then(|(coll, data, ts, key)| {
             let collected_at = DateTime::parse_from_rfc3339(&ts).ok()?.with_timezone(&Utc);
             let data: serde_json::Value = serde_json::from_str(&data).ok()?;
             Some(Snapshot {
                 collector: coll,
                 data,
                 collected_at,
+                idempotency_key: key,
             })
         }))
     }
@@ -571,8 +582,8 @@ impl Store {
         &self,
         source_id: &str,
     ) -> Result<Vec<Snapshot>, sqlx::Error> {
-        let rows: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT collector, data, collected_at
+        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+            "SELECT collector, data, collected_at, idempotency_key
              FROM metric_snapshots
              WHERE source_id = ? AND id IN (
                 SELECT MAX(id) FROM metric_snapshots WHERE source_id = ? GROUP BY collector
@@ -585,13 +596,14 @@ impl Store {
 
         Ok(rows
             .into_iter()
-            .filter_map(|(coll, data, ts)| {
+            .filter_map(|(coll, data, ts, key)| {
                 let collected_at = DateTime::parse_from_rfc3339(&ts).ok()?.with_timezone(&Utc);
                 let data: serde_json::Value = serde_json::from_str(&data).ok()?;
                 Some(Snapshot {
                     collector: coll,
                     data,
                     collected_at,
+                    idempotency_key: key,
                 })
             })
             .collect())
@@ -874,6 +886,7 @@ mod tests {
             collector: "test".into(),
             data: serde_json::json!({"value": 42}),
             collected_at: Utc::now(),
+            idempotency_key: String::new(),
         };
         store.insert_snapshot(&snap).await.unwrap();
 
@@ -892,6 +905,7 @@ mod tests {
                 collector: "test".into(),
                 data: serde_json::json!({"i": i}),
                 collected_at: Utc::now(),
+                idempotency_key: String::new(),
             };
             store.insert_snapshot(&snap).await.unwrap();
         }

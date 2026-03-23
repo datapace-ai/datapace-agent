@@ -61,6 +61,7 @@ impl Collector for MongoTopCollector {
             collector: self.name().into(),
             data: serde_json::Value::Array(rows),
             collected_at: Utc::now(),
+            idempotency_key: String::new(),
         })
     }
 }

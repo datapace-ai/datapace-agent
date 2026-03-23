@@ -46,6 +46,7 @@ impl Collector for MongoServerStatusCollector {
             collector: self.name().into(),
             data: serde_json::Value::Array(vec![data]),
             collected_at: Utc::now(),
+            idempotency_key: String::new(),
         })
     }
 }

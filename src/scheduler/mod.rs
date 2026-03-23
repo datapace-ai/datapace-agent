@@ -136,6 +136,10 @@ impl Scheduler {
 
             match collector.collect(self.pool.as_ref()).await {
                 Ok(mut snapshot) => {
+                    // Stamp idempotency key (legacy scheduler — no source_id)
+                    snapshot.idempotency_key =
+                        anonymizer::idempotency_key("", collector.name(), &snapshot.collected_at);
+
                     // Anonymize query text in the snapshot data
                     anonymize_snapshot_queries(&mut snapshot);
 

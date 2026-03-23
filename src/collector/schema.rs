@@ -143,6 +143,7 @@ impl Collector for SchemaCollector {
             collector: self.name().into(),
             data: serde_json::to_value(&snap).unwrap_or_default(),
             collected_at: Utc::now(),
+            idempotency_key: String::new(),
         })
     }
 }

@@ -100,6 +100,7 @@ impl Collector for ExplainCollector {
             collector: self.name().into(),
             data: serde_json::to_value(&results).unwrap_or_default(),
             collected_at: Utc::now(),
+            idempotency_key: String::new(),
         })
     }
 }
