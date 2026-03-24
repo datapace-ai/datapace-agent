@@ -1,9 +1,9 @@
 [package]
 name = "datapace-agent"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
 authors = ["Datapace <hello@datapace.ai>"]
-description = "A lightweight agent that collects database metrics and sends them to Datapace Cloud"
+description = "Open-source PostgreSQL monitoring agent with local time-series storage, web UI, and optional cloud shipping"
 license = "Apache-2.0"
 repository = "https://github.com/datapace-ai/datapace-agent"
 readme = "README.md"
@@ -17,16 +17,29 @@ tokio = { version = "1.43", features = ["full"] }
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
 
-# Configuration
+# Configuration (TOML)
+toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
 
-# PostgreSQL
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono"] }
+# Database: PostgreSQL + SQLite via sqlx
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "sqlite",
+    "chrono",
+] }
 
-# HTTP client
+# Database: MongoDB
+mongodb = { version = "2", default-features = false, features = ["tokio-runtime", "bson-chrono-0_4"] }
+bson = { version = "2", features = ["chrono-0_4"] }
+
+# HTTP client (for shippers)
 reqwest = { version = "0.12", features = ["json", "gzip", "rustls-tls"], default-features = false }
+
+# Web server (UI + Prometheus exporter)
+axum = "0.8"
 
 # Logging
 tracing = "0.1"
@@ -37,21 +50,16 @@ thiserror = "2.0"
 anyhow = "1.0"
 
 # Utilities
+tokio-stream = "0.1"
 chrono = { version = "0.4", features = ["serde", "clock"] }
-uuid = { version = "1.11", features = ["v4", "serde"] }
 sha2 = "0.10"
 hex = "0.4"
 regex = "1.11"
 async-trait = "0.1"
 
-# Graceful shutdown
-tokio-util = "0.7"
-
 [dev-dependencies]
-mockall = "0.13"
 tokio-test = "0.4"
-wiremock = "0.6"
-testcontainers = "0.23"
+tempfile = "3"
 
 [profile.release]
 lto = true

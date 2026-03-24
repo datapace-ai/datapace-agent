@@ -1,0 +1,49 @@
+# Datapace Agent v2 Configuration
+# Copy to agent.toml and customize as needed.
+
+[agent]
+# Unique name for this agent instance (auto-generated if omitted)
+# name = "prod-primary"
+
+# Where to store local SQLite database
+data_dir = "/var/lib/datapace"
+
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+
+# Retention period for local time-series data in days
+retention_days = 90
+
+[postgres]
+# PostgreSQL connection URL (required)
+# Supports env var expansion: ${DATABASE_URL}
+url = "postgres://datapace:password@localhost:5432/mydb"
+
+# Connection pool size (agent is read-only, keep small)
+pool_size = 3
+
+# Collection intervals in seconds
+fast_interval = 30    # pg_stat_activity, locks
+slow_interval = 300   # tables, schema, io
+
+[shipper]
+# Where to send data: "none", "datapace", "prometheus", "generic_https"
+target = "none"
+
+# --- Datapace Cloud settings (when target = "datapace") ---
+# api_key = "${DATAPACE_API_KEY}"
+# endpoint = "https://api.datapace.ai/v1/ingest"
+
+# --- Prometheus settings (when target = "prometheus") ---
+# prometheus_port = 9187
+
+# --- Generic HTTPS settings (when target = "generic_https") ---
+# generic_url = "https://your-endpoint.example.com/metrics"
+# generic_token = "Bearer your-token"
+
+[ui]
+# Enable the built-in web dashboard
+enabled = true
+
+# Listen address for the web UI
+listen = "127.0.0.1:7080"

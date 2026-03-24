@@ -1,152 +1,217 @@
-//! Metrics collection scheduler.
-//!
-//! Manages periodic collection and upload of database metrics.
+pub mod manager;
 
-use crate::collector::{Collector, CollectorError};
-use crate::uploader::{Uploader, UploaderError};
+pub use manager::SchedulerManager;
+
+use crate::anonymizer;
+use crate::collector::capability::{Capabilities, CapabilitySet};
+use crate::collector::pool::DatabasePool;
+use crate::collector::registry;
+use crate::collector::Collector;
+use crate::store::{QueryFingerprint, Store};
+use chrono::Utc;
 use std::sync::Arc;
 use std::time::Duration;
-use thiserror::Error;
 use tokio::sync::watch;
 use tokio::time::{interval, MissedTickBehavior};
 use tracing::{debug, error, info, warn};
 
-/// Errors that can occur in the scheduler
-#[derive(Error, Debug)]
-pub enum SchedulerError {
-    #[error("Collection error: {0}")]
-    CollectionError(#[from] CollectorError),
-
-    #[error("Upload error: {0}")]
-    UploadError(#[from] UploaderError),
-
-    #[error("Scheduler was stopped")]
-    Stopped,
-}
-
-/// Scheduler for periodic metrics collection
+/// Dual-interval scheduler: fast loop (30s) + slow loop (300s).
+/// Legacy single-DB scheduler — used when running from TOML config.
 pub struct Scheduler {
-    collector: Arc<dyn Collector>,
-    uploader: Arc<Uploader>,
-    interval: Duration,
+    pool: Arc<dyn DatabasePool>,
+    store: Arc<Store>,
+    capabilities: CapabilitySet,
+    fast_interval: Duration,
+    slow_interval: Duration,
     shutdown_rx: watch::Receiver<bool>,
+    /// Called after each tick so shippers can pick up new data.
+    on_tick: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Scheduler {
-    /// Create a new scheduler
     pub fn new(
-        collector: Arc<dyn Collector>,
-        uploader: Arc<Uploader>,
-        interval: Duration,
+        pool: Arc<dyn DatabasePool>,
+        store: Arc<Store>,
+        capabilities: Capabilities,
+        fast_interval: Duration,
+        slow_interval: Duration,
         shutdown_rx: watch::Receiver<bool>,
     ) -> Self {
         Self {
-            collector,
-            uploader,
-            interval,
+            pool,
+            store,
+            capabilities: CapabilitySet::Postgres(capabilities),
+            fast_interval,
+            slow_interval,
             shutdown_rx,
+            on_tick: None,
         }
     }
 
-    /// Run the scheduler loop
-    ///
-    /// This will collect and upload metrics at the configured interval
-    /// until a shutdown signal is received.
-    pub async fn run(&mut self) -> Result<(), SchedulerError> {
+    /// Register a callback invoked after each collection tick.
+    pub fn on_tick(&mut self, f: Arc<dyn Fn() + Send + Sync>) {
+        self.on_tick = Some(f);
+    }
+
+    /// Run until shutdown signal is received.
+    pub async fn run(&mut self) {
         info!(
-            interval_secs = self.interval.as_secs(),
-            "Starting metrics collection scheduler"
+            fast_s = self.fast_interval.as_secs(),
+            slow_s = self.slow_interval.as_secs(),
+            "Scheduler starting"
         );
 
-        // Add jitter to prevent thundering herd (use system time as simple randomness)
-        let jitter_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_millis() as u64 % 5000)
-            .unwrap_or(0);
-        tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
-
-        let mut interval = interval(self.interval);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut fast = interval(self.fast_interval);
+        fast.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut slow = interval(self.slow_interval);
+        slow.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         // Collect immediately on start
-        self.collect_and_upload().await;
+        self.run_fast_collectors().await;
+        self.run_slow_collectors().await;
 
         loop {
             tokio::select! {
-                _ = interval.tick() => {
-                    self.collect_and_upload().await;
+                _ = fast.tick() => {
+                    self.run_fast_collectors().await;
+                }
+                _ = slow.tick() => {
+                    self.run_slow_collectors().await;
                 }
                 _ = self.shutdown_rx.changed() => {
                     if *self.shutdown_rx.borrow() {
-                        info!("Scheduler received shutdown signal");
-                        return Ok(());
+                        info!("Scheduler shutting down");
+                        return;
                     }
                 }
             }
         }
     }
 
-    /// Perform a single collection and upload cycle
-    async fn collect_and_upload(&self) {
-        debug!("Starting metrics collection cycle");
+    /// Run a single fast + slow tick (for dry-run / testing).
+    pub async fn run_once(&self) {
+        self.run_fast_collectors().await;
+        self.run_slow_collectors().await;
+    }
 
-        let start = std::time::Instant::now();
+    async fn run_fast_collectors(&self) {
+        debug!("Fast tick");
+        let db_type = self.pool.db_type();
+        let all_names: Vec<String> = registry::all_collector_names_for(db_type)
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let collectors = registry::build_collectors_for_tick(db_type, "fast", &all_names);
+        self.run_collectors(&collectors).await;
+    }
 
-        match self.collector.collect().await {
-            Ok(payload) => {
-                let collection_time = start.elapsed();
+    async fn run_slow_collectors(&self) {
+        debug!("Slow tick");
+        let db_type = self.pool.db_type();
+        let all_names: Vec<String> = registry::all_collector_names_for(db_type)
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let collectors = registry::build_collectors_for_tick(db_type, "slow", &all_names);
+        self.run_collectors(&collectors).await;
+    }
+
+    async fn run_collectors(&self, collectors: &[Box<dyn Collector>]) {
+        for collector in collectors {
+            // Check capabilities
+            let missing: Vec<_> = collector
+                .requires()
+                .iter()
+                .filter(|req| !self.capabilities.has(req))
+                .collect();
+
+            if !missing.is_empty() {
                 debug!(
-                    duration_ms = collection_time.as_millis(),
-                    "Metrics collection completed"
+                    collector = collector.name(),
+                    missing = ?missing,
+                    "Skipping collector — missing capabilities"
                 );
+                continue;
+            }
 
-                match self.uploader.upload(&payload).await {
-                    Ok(()) => {
-                        let total_time = start.elapsed();
-                        info!(
-                            collection_ms = collection_time.as_millis(),
-                            total_ms = total_time.as_millis(),
-                            "Metrics cycle completed successfully"
+            match collector.collect(self.pool.as_ref()).await {
+                Ok(mut snapshot) => {
+                    // Stamp idempotency key (legacy scheduler — no source_id)
+                    snapshot.idempotency_key =
+                        anonymizer::idempotency_key("", collector.name(), &snapshot.collected_at);
+
+                    // Anonymize query text in the snapshot data
+                    anonymize_snapshot_queries(&mut snapshot);
+
+                    // Extract and store query fingerprints
+                    if let Err(e) = store_fingerprints(&self.store, &snapshot).await {
+                        warn!(collector = collector.name(), error = %e, "Failed to store fingerprints");
+                    }
+
+                    if let Err(e) = self.store.insert_snapshot(&snapshot).await {
+                        error!(
+                            collector = collector.name(),
+                            error = %e,
+                            "Failed to write snapshot to store"
                         );
                     }
-                    Err(e) => {
-                        error!(error = %e, "Failed to upload metrics");
-                    }
+                }
+                Err(e) => {
+                    error!(
+                        collector = collector.name(),
+                        error = %e,
+                        "Collector failed"
+                    );
                 }
             }
-            Err(e) => {
-                error!(error = %e, "Failed to collect metrics");
-            }
-        }
-    }
-
-    /// Run a single collection cycle (for dry-run mode)
-    pub async fn run_once(&self) -> Result<(), SchedulerError> {
-        info!("Running single metrics collection (dry-run mode)");
-
-        let payload = self.collector.collect().await?;
-
-        // In dry-run mode, just print the payload
-        match payload.to_json_pretty() {
-            Ok(json) => {
-                println!("{}", json);
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to serialize payload");
-            }
         }
 
-        Ok(())
+        // Signal shippers
+        if let Some(ref f) = self.on_tick {
+            f();
+        }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_scheduler_error_display() {
-        let err = SchedulerError::Stopped;
-        assert!(err.to_string().contains("stopped"));
+/// Sanitize query text fields within snapshot JSON data.
+fn anonymize_snapshot_queries(snapshot: &mut crate::store::Snapshot) {
+    if let serde_json::Value::Array(ref mut items) = snapshot.data {
+        for item in items.iter_mut() {
+            if let Some(q) = item.get("query").and_then(|v| v.as_str()).map(String::from) {
+                let sanitized = anonymizer::sanitize_query(&q);
+                item["query"] = serde_json::Value::String(sanitized);
+            }
+        }
     }
+}
+
+/// Extract query fingerprints from statements/activity snapshots and upsert them.
+async fn store_fingerprints(
+    store: &Store,
+    snapshot: &crate::store::Snapshot,
+) -> Result<(), sqlx::Error> {
+    if snapshot.collector != "statements" && snapshot.collector != "activity" {
+        return Ok(());
+    }
+
+    if let serde_json::Value::Array(ref items) = snapshot.data {
+        for item in items {
+            if let Some(query) = item.get("query").and_then(|v| v.as_str()) {
+                if query.is_empty() {
+                    continue;
+                }
+                let fp = anonymizer::fingerprint_query(query);
+                let now = Utc::now();
+                store
+                    .upsert_fingerprint(&QueryFingerprint {
+                        fingerprint: fp,
+                        sanitized_query: query.to_string(),
+                        first_seen: now,
+                        last_seen: now,
+                    })
+                    .await?;
+            }
+        }
+    }
+    Ok(())
 }

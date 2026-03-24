@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Datapace Agent</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <a href="#" class="logo">
+      <img src="/logo.svg" alt="datapace" class="logo-icon">
+      <span class="logo-text">datapace</span>
+    </a>
+    <div id="header-action"></div>
+  </header>
+
+  <main id="main-content"></main>
+</div>
+
+<!-- Drawer overlay -->
+<div id="drawer-overlay" class="drawer-overlay" onclick="closeDrawer()"></div>
+
+<!-- Add/Edit Database Drawer -->
+<div id="drawer" class="drawer">
+  <div class="drawer-header">
+    <h2 id="drawer-title">Add Database</h2>
+    <button class="drawer-close" onclick="closeDrawer()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 1l12 12M13 1L1 13"/></svg>
+    </button>
+  </div>
+  <form id="db-form" onsubmit="return saveDatabase(event)">
+    <input type="hidden" id="edit-id" value="">
+
+    <label>Name</label>
+    <input type="text" id="db-name" placeholder="prod-primary" required>
+
+    <div class="form-row">
+      <div>
+        <label>Database type</label>
+        <select id="db-type" onchange="onDbTypeChange()">
+          <option value="postgres">PostgreSQL</option>
+          <option value="mysql" disabled>MySQL (coming soon)</option>
+          <option value="mongodb">MongoDB</option>
+        </select>
+      </div>
+      <div>
+        <label>Environment</label>
+        <select id="db-env" onchange="onEnvChange()">
+          <option value="production">Production</option>
+          <option value="staging">Staging</option>
+          <option value="development">Development</option>
+          <option value="local">Local</option>
+        </select>
+      </div>
+    </div>
+
+    <label>Connection URL</label>
+    <div class="input-group">
+      <input type="text" id="db-url" placeholder="postgres://user:pass@host:5432/dbname" required>
+      <button type="button" class="btn-secondary btn-sm" onclick="testConnection()">Test</button>
+    </div>
+    <div id="test-result" class="test-result"></div>
+
+    <div class="form-row">
+      <div>
+        <label>Fast interval (s)</label>
+        <input type="number" id="db-fast" value="30" min="5">
+      </div>
+      <div>
+        <label>Slow interval (s)</label>
+        <input type="number" id="db-slow" value="300" min="5">
+      </div>
+    </div>
+
+    <label>Collectors</label>
+    <div class="checkbox-group" id="collectors-group">
+      <label class="checkbox"><input type="checkbox" value="statements" checked> statements</label>
+      <label class="checkbox"><input type="checkbox" value="activity" checked> activity</label>
+      <label class="checkbox"><input type="checkbox" value="locks" checked> locks</label>
+      <label class="checkbox"><input type="checkbox" value="explain"> explain</label>
+      <label class="checkbox"><input type="checkbox" value="tables" checked> tables</label>
+      <label class="checkbox"><input type="checkbox" value="schema" checked> schema</label>
+      <label class="checkbox"><input type="checkbox" value="io"> io</label>
+    </div>
+
+    <label class="checkbox anon-toggle">
+      <input type="checkbox" id="anon-enabled" checked> Anonymize queries
+      <span class="anon-hint" id="anon-hint"></span>
+    </label>
+
+    <div class="drawer-actions">
+      <button type="submit" class="btn-primary">Save</button>
+      <button type="button" class="btn-danger" id="btn-delete" style="display:none" onclick="deleteDatabase()">Delete</button>
+    </div>
+  </form>
+</div>
+
+<!-- Shipper Modal Overlay -->
+<div class="modal-overlay" id="sm-overlay" onclick="closeShipperModal()"></div>
+
+<!-- Add Shipper Modal -->
+<div class="modal" id="shipper-modal">
+  <div class="modal-header">
+    <h3>Add Shipper</h3>
+    <button class="drawer-close" onclick="closeShipperModal()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 1l12 12M13 1L1 13"/></svg>
+    </button>
+  </div>
+  <div class="modal-type-label" id="sm-type-label"></div>
+  <label>Name</label>
+  <input type="text" id="sm-name" placeholder="My Webhook">
+  <label>Endpoint URL</label>
+  <input type="text" id="sm-endpoint" placeholder="https://api.example.com/ingest">
+  <label>Auth token</label>
+  <input type="text" id="sm-token" placeholder="Bearer token (optional)">
+  <div class="modal-actions">
+    <button class="btn-primary" onclick="saveShipper()">Add</button>
+    <button class="btn-secondary" onclick="closeShipperModal()">Cancel</button>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

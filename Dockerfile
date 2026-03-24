@@ -1,47 +1,35 @@
 # Build stage
-FROM rust:1.83-alpine AS builder
+FROM rust:1.83-slim AS builder
 
-# Install build dependencies
-RUN apk add --no-cache musl-dev pkgconfig
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# Copy entire project
 COPY . .
-
-# Build the application
 RUN cargo build --release
 
 # Runtime stage
-FROM alpine:3.21
+FROM debian:bookworm-slim
 
-# Install CA certificates for TLS
-RUN apk add --no-cache ca-certificates tzdata
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -r -s /bin/false datapace && \
+    mkdir -p /data && chown datapace:datapace /data
 
-# Create non-root user
-RUN addgroup -g 1000 datapace && \
-    adduser -u 1000 -G datapace -s /bin/sh -D datapace
+COPY --from=builder /app/target/release/datapace-agent /usr/local/bin/datapace-agent
+COPY --from=builder /app/config/agent.example.toml /app/agent.example.toml
 
+USER datapace
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=builder /app/target/release/datapace-agent /usr/local/bin/datapace-agent
+VOLUME /data
 
-# Copy example config
-COPY --from=builder /app/configs/agent.example.yaml /app/agent.example.yaml
-
-# Use non-root user
-USER datapace
-
-# Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:7080/api/health || exit 1
 
-# Default command
 ENTRYPOINT ["datapace-agent"]
-CMD []
+CMD ["--config", "/app/agent.toml"]
 
-# Labels
 LABEL org.opencontainers.image.source="https://github.com/datapace-ai/datapace-agent"
-LABEL org.opencontainers.image.description="Datapace Agent - Database metrics collector"
+LABEL org.opencontainers.image.description="Datapace Agent — PostgreSQL monitoring with local storage and web UI"
 LABEL org.opencontainers.image.licenses="Apache-2.0"

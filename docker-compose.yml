@@ -1,31 +1,22 @@
-# Docker Compose configuration for Datapace Agent
+# Datapace Agent v2 — Quickstart
 #
-# Usage:
-#   1. Copy .env.example to .env and fill in your values
-#   2. Run: docker-compose up -d
+# 1. Copy config/agent.example.toml to agent.toml and edit postgres.url
+# 2. docker-compose up -d
 #
-# For development with a local PostgreSQL:
-#   docker-compose --profile dev up -d
+# Web UI: http://localhost:7080
 
 services:
   datapace-agent:
-    image: ghcr.io/datapace-ai/datapace-agent:latest
-    # Or build locally:
-    # build: .
+    build: .
     container_name: datapace-agent
-    environment:
-      DATAPACE_API_KEY: ${DATAPACE_API_KEY}
-      DATABASE_URL: ${DATABASE_URL}
-      COLLECTION_INTERVAL: ${COLLECTION_INTERVAL:-60s}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
+    volumes:
+      - ./agent.toml:/app/agent.toml:ro
+      - agent_data:/data
+    ports:
+      - "7080:7080"
     restart: unless-stopped
-    # Optional: mount config file
-    # volumes:
-    #   - ./agent.yaml:/app/agent.yaml:ro
-    # command: ["--config", "/app/agent.yaml"]
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7080/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -53,4 +44,5 @@ services:
       retries: 5
 
 volumes:
+  agent_data:
   postgres_data:
