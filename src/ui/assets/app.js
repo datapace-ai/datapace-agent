@@ -5,8 +5,9 @@ const API = '';
 let databases = [];
 let editingId = null;
 let refreshTimer = null;
-let currentView = null;     // null = list, { id: "..." } = pipeline page
-let selectedNode = null;    // which pipeline node is selected on pipeline page
+let currentView = null;       // null = list, { id: "..." } = detail page
+let selectedCollector = null;  // which collector is expanded on detail page
+let activeLogTab = 'pipeline'; // 'pipeline' or 'shipping'
 
 // === Helpers ===
 
@@ -34,10 +35,10 @@ function fmtMs(ms) {
 }
 
 function fmtBytes(b) {
-  if (!b) return '0B';
-  if (b >= 1e6) return (b / 1e6).toFixed(1) + 'MB';
-  if (b >= 1e3) return (b / 1e3).toFixed(1) + 'KB';
-  return b + 'B';
+  if (!b) return '0 B';
+  if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
+  if (b >= 1e3) return (b / 1e3).toFixed(1) + ' KB';
+  return b + ' B';
 }
 
 function timeAgo(iso) {
@@ -58,41 +59,57 @@ function escHtml(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// === Database Type Icons ===
-
-const DB_ICONS = {
-  postgres: `<svg viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 4.69 2 8v8c0 3.31 4.48 6 10 6s10-2.69 10-6V8c0-3.31-4.48-6-10-6z" fill="none" stroke="currentColor" stroke-width="1.5"/><ellipse cx="12" cy="8" rx="10" ry="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2 12c0 2.21 4.48 4 10 4s10-1.79 10-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`,
-  mysql: `<svg viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 4.69 2 8v8c0 3.31 4.48 6 10 6s10-2.69 10-6V8c0-3.31-4.48-6-10-6z" fill="none" stroke="currentColor" stroke-width="1.5"/><ellipse cx="12" cy="8" rx="10" ry="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2 12c0 2.21 4.48 4 10 4s10-1.79 10-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`,
-  mongodb: `<svg viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 4.69 2 8v8c0 3.31 4.48 6 10 6s10-2.69 10-6V8c0-3.31-4.48-6-10-6z" fill="none" stroke="currentColor" stroke-width="1.5"/><ellipse cx="12" cy="8" rx="10" ry="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2 12c0 2.21 4.48 4 10 4s10-1.79 10-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`,
-};
-
-function dbIcon(dbType) { return DB_ICONS[dbType] || DB_ICONS.postgres; }
-
 const ENV_LABELS = { production: 'PROD', staging: 'STG', development: 'DEV', local: 'LOCAL' };
 
-// === Monochrome SVG Icons ===
+// Collectors per database type
+const COLLECTORS_BY_TYPE = {
+  postgres: [
+    { name: 'statements', checked: true },
+    { name: 'activity', checked: true },
+    { name: 'locks', checked: true },
+    { name: 'explain', checked: false },
+    { name: 'tables', checked: true },
+    { name: 'schema', checked: true },
+    { name: 'io', checked: false },
+  ],
+  mongodb: [
+    { name: 'mongo_server_status', checked: true },
+    { name: 'mongo_current_ops', checked: true },
+    { name: 'mongo_slow_queries', checked: true },
+    { name: 'mongo_top', checked: true },
+    { name: 'mongo_collections', checked: true },
+    { name: 'mongo_repl_status', checked: true },
+  ],
+};
+
+const URL_PLACEHOLDERS = {
+  postgres: 'postgres://user:pass@host:5432/dbname',
+  mongodb: 'mongodb+srv://user:pass@cluster.example.net/dbname',
+};
+
+// === SVG Icons ===
 
 const ICON = {
-  collect: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="12" width="3" height="6" rx="0.5"/><rect x="8.5" y="7" width="3" height="11" rx="0.5"/><rect x="15" y="2" width="3" height="16" rx="0.5"/></svg>`,
-  anonymize: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L3 5.5v4.5c0 4.2 3 7.7 7 8.5 4-.8 7-4.3 7-8.5V5.5L10 2z"/><path d="M7 10l2 2 4-4"/></svg>`,
-  store: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="10" cy="5" rx="7" ry="3"/><path d="M3 5v10c0 1.66 3.13 3 7 3s7-1.34 7-3V5"/><path d="M3 10c0 1.66 3.13 3 7 3s7-1.34 7-3"/></svg>`,
-  webhook: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3l-8 8"/><path d="M18 3l-5 15-3-7-7-3 15-5z"/></svg>`,
-  custom: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12l-2 2 2 2"/><path d="M12 8l2-2-2-2"/><path d="M7 3h6a4 4 0 014 4v6a4 4 0 01-4 4H7a4 4 0 01-4-4V7a4 4 0 014-4z"/></svg>`,
-  datapace: `<img src="/logo.svg" style="width:100%;height:100%;object-fit:contain">`,
   arrow: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>`,
   back: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2L4 7l5 5"/></svg>`,
   plus: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M7 2v10M2 7h10"/></svg>`,
-  empty: `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="20" stroke="rgba(255,255,255,0.12)" stroke-width="1.5" stroke-dasharray="4 4"/><path d="M24 16v16M16 24h16" stroke="rgba(255,255,255,0.2)" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+  x: `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 2l8 8M10 2L2 10"/></svg>`,
+  empty: `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="20" stroke="rgba(255,255,255,0.1)" stroke-width="1.5" stroke-dasharray="4 4"/><path d="M24 16v16M16 24h16" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+  webhook: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3l-8 8"/><path d="M18 3l-5 15-3-7-7-3 15-5z"/></svg>`,
+  custom: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12l-2 2 2 2"/><path d="M12 8l2-2-2-2"/><path d="M7 3h6a4 4 0 014 4v6a4 4 0 01-4 4H7a4 4 0 01-4-4V7a4 4 0 014-4z"/></svg>`,
+  datapace: `<img src="/logo.svg" style="width:100%;height:100%;object-fit:contain">`,
 };
 
-function nodeIcon(type) { return ICON[type] || ICON.custom; }
-function shipperIcon(type_) { return ICON[type_] || ICON.custom; }
+function shipperIcon(type_) {
+  const icons = { datapace: ICON.datapace, webhook: ICON.webhook, custom: ICON.custom };
+  return icons[type_] || ICON.custom;
+}
 
 // === Routing ===
 
 function navigate(hash) {
   if (location.hash !== hash) location.hash = hash;
-  else route(); // force re-route if same hash
+  else route();
 }
 
 function route() {
@@ -100,11 +117,11 @@ function route() {
   const match = hash.match(/^#db\/(.+)$/);
   if (match) {
     currentView = { id: match[1] };
-    selectedNode = null;
-    renderPipelinePage();
+    selectedCollector = null;
+    renderDetailPage();
   } else {
     currentView = null;
-    selectedNode = null;
+    selectedCollector = null;
     renderListPage();
   }
 }
@@ -115,7 +132,7 @@ async function loadDatabases() {
   try {
     databases = await fetchJSON('/api/databases');
     if (currentView) {
-      updatePipelinePage();
+      updateDetailPage();
     } else {
       renderListPage();
     }
@@ -130,7 +147,7 @@ function startRefresh() {
 }
 
 // =====================================
-//  LIST PAGE — database cards
+//  LIST PAGE
 // =====================================
 
 function renderListPage() {
@@ -143,13 +160,15 @@ function renderListPage() {
       <div class="empty-state">
         <div class="empty-icon">${ICON.empty}</div>
         <h2>No databases configured</h2>
-        <p>Add a PostgreSQL database to start collecting metrics.</p>
+        <p>Add a PostgreSQL or MongoDB database to start collecting metrics.</p>
         <button class="btn-primary" onclick="openDrawer()">${ICON.plus} Add Database</button>
       </div>`;
     return;
   }
 
-  let html = '';
+  let html = '<div class="page-header"><h1 class="page-title">Databases</h1></div>';
+  html += '<div class="db-list">';
+
   for (const db of databases) {
     const rs = db.runtime_status;
     const status = rs?.status || db.status || 'stopped';
@@ -157,57 +176,38 @@ function renderListPage() {
     const dbType = db.db_type || 'postgres';
     const env = db.environment || 'production';
     const envLabel = ENV_LABELS[env] || env.toUpperCase();
-    const shippers = db.shippers || [];
     const totalRows = stats.reduce((sum, s) => sum + (s.rows || 0), 0);
 
-    html += `<div class="db-card" onclick="navigate('#db/${db.id}')">`;
-    html += '<div class="db-card-header">';
-    html += '<div class="db-card-left">';
-    html += `<div class="db-type-icon" title="${escHtml(dbType)}">${dbIcon(dbType)}</div>`;
+    html += `<div class="db-row" onclick="navigate('#db/${db.id}')">`;
+    html += '<div class="db-row-left">';
     html += `<div class="status-dot ${status}"></div>`;
-    html += '<div class="db-card-info-row">';
-    html += '<div class="db-info">';
     html += `<span class="db-name">${escHtml(db.name)}</span>`;
     html += `<span class="db-url">${escHtml(db.masked_url)}</span>`;
     html += '</div>';
-    html += `<span class="env-badge ${env}">${envLabel}</span>`;
-    if (db.anonymize) {
-      html += `<span class="anon-badge on" title="Query anonymization enabled">anon</span>`;
-    } else {
-      html += `<span class="anon-badge off" title="Query anonymization disabled">raw</span>`;
-    }
-    html += '</div></div>';
-    html += `<div style="display:flex;align-items:center;gap:0.35rem">`;
-    html += `<button class="btn-edit" onclick="event.stopPropagation(); editDatabase('${db.id}')">edit</button>`;
-    html += `<span class="db-card-arrow">${ICON.arrow}</span>`;
-    html += `</div>`;
-    html += '</div>';
-
-    // Summary row
-    html += '<div class="db-card-footer">';
-    html += `<span class="status-dot-inline ${status}"></span>`;
-    html += `<span>${escHtml(status)}</span>`;
-    html += `<span>${stats.length} collectors</span>`;
-    html += `<span>${fmtNum(totalRows)} rows</span>`;
-    html += `<span>${shippers.length} shipper${shippers.length !== 1 ? 's' : ''}</span>`;
-    html += `<span>Last: ${timeAgo(rs?.last_tick)}</span>`;
+    html += '<div class="db-row-meta">';
+    html += `<span class="badge ${dbType}">${dbType}</span>`;
+    html += `<span class="badge ${env}">${envLabel}</span>`;
+    html += `<span class="db-stats">${stats.length} collectors &middot; ${fmtNum(totalRows)} rows</span>`;
+    html += `<span class="db-stats">${timeAgo(rs?.last_tick)}</span>`;
+    html += `<button class="btn-ghost" onclick="event.stopPropagation(); editDatabase('${db.id}')">Edit</button>`;
+    html += `<span class="db-row-arrow">${ICON.arrow}</span>`;
     html += '</div>';
     html += '</div>';
   }
 
+  html += '</div>';
   main.innerHTML = html;
 }
 
 // =====================================
-//  PIPELINE PAGE — full page per database
+//  DETAIL PAGE
 // =====================================
 
-function renderPipelinePage() {
+function renderDetailPage() {
   const db = databases.find(d => d.id === currentView.id);
   const main = $('#main-content');
   const headerBtn = $('#header-action');
-
-  headerBtn.innerHTML = `<button class="btn-secondary" onclick="navigate('#')">${ICON.back} All Databases</button>`;
+  headerBtn.innerHTML = '';
 
   if (!db) {
     main.innerHTML = '<div class="empty-state"><h2>Database not found</h2><p>It may have been deleted.</p></div>';
@@ -222,210 +222,139 @@ function renderPipelinePage() {
   const dbType = db.db_type || 'postgres';
   const env = db.environment || 'production';
   const envLabel = ENV_LABELS[env] || env.toUpperCase();
-
-  let html = '';
-
-  // Page header
-  html += '<div class="pipe-page-header">';
-  html += `<div class="db-type-icon">${dbIcon(dbType)}</div>`;
-  html += `<div class="status-dot ${status}"></div>`;
-  html += `<h1 class="pipe-page-title">${escHtml(db.name)}</h1>`;
-  html += `<span class="env-badge ${env}">${envLabel}</span>`;
-  if (db.anonymize) html += `<span class="anon-badge on">anon</span>`;
-  else html += `<span class="anon-badge off">raw</span>`;
-  html += `<button class="btn-edit" onclick="editDatabase('${db.id}')" style="margin-left:auto">edit</button>`;
-  html += '</div>';
-  html += `<div class="pipe-page-url">${escHtml(db.masked_url)}</div>`;
-
-  // Visual pipeline
-  html += buildPipelineNodes(db, rs, stats, shippers, shipperStatuses);
-
-  // Detail panel — shown when a node is clicked
-  html += '<div id="pipe-detail" class="pipe-detail"></div>';
-
-  main.innerHTML = html;
-
-  // Auto-select first node if none
-  if (!selectedNode) {
-    selectNode(stats.length > 0 ? 'collect' : 'store');
-  } else {
-    selectNode(selectedNode);
-  }
-}
-
-function updatePipelinePage() {
-  if (!currentView) return;
-  const db = databases.find(d => d.id === currentView.id);
-  if (!db) return;
-
-  const rs = db.runtime_status;
-  const stats = rs?.collector_stats || [];
-  const shippers = db.shippers || [];
-  const shipperStatuses = rs?.shipper_statuses || [];
-
-  // Re-render pipeline + palette as one unit
-  const wrapEl = $('.pipeline-wrap');
-  if (wrapEl) {
-    wrapEl.outerHTML = buildPipelineNodes(db, rs, stats, shippers, shipperStatuses);
-  }
-
-  // Re-highlight selected node
-  if (selectedNode) highlightNode(selectedNode);
-}
-
-function buildPipelineNodes(db, rs, stats, shippers, shipperStatuses) {
-  const hasCollect = stats.length > 0;
-  const hasError = stats.some(s => s.error);
-  const hasAnon = db.anonymize;
   const totalRows = stats.reduce((sum, s) => sum + (s.rows || 0), 0);
   const totalDur = stats.reduce((sum, s) => sum + (s.duration_ms || 0), 0);
 
-  let html = '<div class="pipeline-wrap">';
-  html += '<div class="pipeline-visual">';
+  let html = '';
 
-  // Collect
-  const cStatus = hasCollect ? (hasError ? 'err' : 'ok') : 'off';
-  html += `<div class="pipe-node ${cStatus} ${selectedNode === 'collect' ? 'selected' : ''}" data-node="collect" onclick="selectNode('collect')">`;
-  html += `<div class="pipe-node-icon">${nodeIcon('collect')}</div>`;
-  html += `<div class="pipe-node-text">`;
-  html += '<div class="pipe-node-label">Collect</div>';
-  html += `<div class="pipe-node-detail">${stats.length} collectors &middot; ${fmtNum(totalRows)} rows &middot; ${fmtMs(totalDur)}</div>`;
-  html += '</div></div>';
+  // Back link
+  html += `<a class="detail-back" onclick="navigate('#')">${ICON.back} All Databases</a>`;
 
-  html += `<div class="pipe-connector ${hasCollect ? 'flowing' : ''}"></div>`;
+  // Header
+  html += '<div class="detail-page-header">';
+  html += `<div class="status-dot ${status}"></div>`;
+  html += `<h1 class="detail-page-title">${escHtml(db.name)}</h1>`;
+  html += `<span class="badge ${dbType}">${dbType}</span>`;
+  html += `<span class="badge ${env}">${envLabel}</span>`;
+  if (db.anonymize) html += `<span class="badge" style="background:var(--green-dim);color:var(--green)">ANON</span>`;
+  html += '<div class="detail-actions">';
+  html += `<button class="btn-ghost" onclick="editDatabase('${db.id}')">Edit</button>`;
+  html += '</div>';
+  html += '</div>';
+  html += `<div class="detail-page-url">${escHtml(db.masked_url)}</div>`;
 
-  // Anonymize
-  if (hasAnon) {
-    html += `<div class="pipe-node ${hasCollect ? 'ok' : 'off'} ${selectedNode === 'anonymize' ? 'selected' : ''}" data-node="anonymize" onclick="selectNode('anonymize')">`;
-    html += `<div class="pipe-node-icon">${nodeIcon('anonymize')}</div>`;
-    html += `<div class="pipe-node-text">`;
-    html += '<div class="pipe-node-label">Anonymize</div>';
-    html += '<div class="pipe-node-detail">scrub PII</div>';
-    html += '</div></div>';
-    html += `<div class="pipe-connector ${hasCollect ? 'flowing' : ''}"></div>`;
-  }
-
-  // Store
-  html += `<div class="pipe-node ${hasCollect ? 'ok' : 'off'} ${selectedNode === 'store' ? 'selected' : ''}" data-node="store" onclick="selectNode('store')">`;
-  html += `<div class="pipe-node-icon">${nodeIcon('store')}</div>`;
-  html += `<div class="pipe-node-text">`;
-  html += '<div class="pipe-node-label">Store</div>';
-  html += '<div class="pipe-node-detail">SQLite</div>';
-  html += '</div></div>';
-
-  html += `<div class="pipe-connector ${hasCollect ? 'flowing' : ''}"></div>`;
-
-  // Shippers fan-out
-  html += '<div class="pipe-shipper-group">';
-  for (const shipper of shippers) {
-    const ss = shipperStatuses.find(s => s.shipper_id === shipper.id);
-    const sStatus = ss ? ss.status : 'off';
-    const nodeId = 'shipper:' + shipper.id;
-    const ep = shipper.endpoint.length > 25 ? shipper.endpoint.substring(0, 25) + '...' : shipper.endpoint;
-    const timeStr = ss?.at ? timeAgo(ss.at) : '';
-    html += `<div class="pipe-node shipper ${sStatus} ${shipper.enabled ? '' : 'disabled'} ${selectedNode === nodeId ? 'selected' : ''}" data-node="${escHtml(nodeId)}" onclick="selectNode('${escHtml(nodeId)}')">`;
-    html += `<div class="pipe-node-icon">${shipperIcon(shipper.shipper_type)}</div>`;
-    html += `<div class="pipe-node-text">`;
-    html += `<div class="pipe-node-label">${escHtml(shipper.name)}</div>`;
-    html += `<div class="pipe-node-detail">${escHtml(ep)}${timeStr ? ' &middot; ' + timeStr : ''}</div>`;
-    html += '</div>';
-    html += `<button class="pipe-node-remove" onclick="event.stopPropagation(); removeShipper('${db.id}', '${shipper.id}')" title="Remove"><svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 1l6 6M7 1L1 7"/></svg></button>`;
-    html += '</div>';
-  }
-  // Drop zone
-  html += `<div class="pipe-drop-zone" data-db-id="${db.id}" ondragover="onPipeDragOver(event)" ondragleave="onPipeDragLeave(event)" ondrop="onPipeDrop(event)">`;
-  html += `<span>${ICON.plus} add shipper</span>`;
+  // Status bar
+  html += '<div class="section">';
+  html += '<div class="status-bar">';
+  html += `<div class="status-item"><span class="status-label">Status</span><span class="status-value ${status}">${status}</span></div>`;
+  html += `<div class="status-item"><span class="status-label">Collectors</span><span class="status-value">${stats.length}</span></div>`;
+  html += `<div class="status-item"><span class="status-label">Total rows</span><span class="status-value">${fmtNum(totalRows)}</span></div>`;
+  html += `<div class="status-item"><span class="status-label">Duration</span><span class="status-value">${fmtMs(totalDur)}</span></div>`;
+  html += `<div class="status-item"><span class="status-label">Last tick</span><span class="status-value">${timeAgo(rs?.last_tick)}</span></div>`;
+  html += `<div class="status-item"><span class="status-label">Shippers</span><span class="status-value">${shippers.length}</span></div>`;
   html += '</div>';
   html += '</div>';
 
-  html += '</div>';
-
-  // Palette — single inline row
-  html += '<div class="shipper-palette">';
-  html += `<span class="palette-label">Drag to add</span>`;
-  html += `<div class="palette-item" draggable="true" ondragstart="onPaletteDragStart(event, 'datapace')"><span class="palette-icon datapace-logo">${ICON.datapace}</span> Datapace</div>`;
-  html += `<div class="palette-item" draggable="true" ondragstart="onPaletteDragStart(event, 'webhook')"><span class="palette-icon">${ICON.webhook}</span> Webhook</div>`;
-  html += `<div class="palette-item" draggable="true" ondragstart="onPaletteDragStart(event, 'custom')"><span class="palette-icon">${ICON.custom}</span> Custom</div>`;
-  html += '</div>';
-  html += '</div>'; // close .pipeline-wrap
-
-  return html;
-}
-
-// === Node Selection + Detail ===
-
-function selectNode(nodeId) {
-  selectedNode = nodeId;
-  highlightNode(nodeId);
-  loadNodeDetail(nodeId);
-}
-
-function highlightNode(nodeId) {
-  $$('.pipe-node').forEach(el => {
-    el.classList.toggle('selected', el.dataset.node === nodeId);
-  });
-}
-
-async function loadNodeDetail(nodeId) {
-  const el = $('#pipe-detail');
-  if (!el || !currentView) return;
-  const db = databases.find(d => d.id === currentView.id);
-  if (!db) return;
-  const rs = db.runtime_status;
-  const stats = rs?.collector_stats || [];
-
-  el.innerHTML = '<div style="padding:1rem;font-size:0.8rem;color:var(--text-muted)">Loading...</div>';
-
-  try {
-    if (nodeId === 'collect') {
-      await renderCollectDetail(el, db, stats);
-    } else if (nodeId === 'anonymize') {
-      await renderAnonymizeDetail(el, db);
-    } else if (nodeId === 'store') {
-      await renderStoreDetail(el, db);
-    } else if (nodeId.startsWith('shipper:')) {
-      const shipperId = nodeId.replace('shipper:', '');
-      await renderShipperDetail(el, db, shipperId);
-    }
-  } catch (e) {
-    el.innerHTML = `<div class="err" style="padding:1rem;font-size:0.8rem">Error: ${escHtml(e.message)}</div>`;
-  }
-}
-
-// -- Collect detail: tabs per collector --
-
-async function renderCollectDetail(el, db, stats) {
-  const collectors = db.collectors || [];
-  if (collectors.length === 0) {
-    el.innerHTML = '<div class="detail-empty">No collectors configured</div>';
-    return;
-  }
-
-  // Per-collector stat cards + tab selector
-  let html = '<div class="detail-header"><h3><span class="detail-icon">' + nodeIcon('collect') + '</span> Collectors</h3></div>';
-
-  // Stat cards
-  html += '<div class="collector-cards">';
-  for (const name of collectors) {
-    const stat = stats.find(s => s.name === name);
-    const hasErr = stat?.error;
-    html += `<div class="collector-card ${hasErr ? 'err' : (stat ? 'ok' : 'off')}" onclick="loadCollectorData('${escHtml(name)}')">`;
-    html += `<div class="cc-name">${escHtml(name)}</div>`;
-    if (stat) {
-      html += `<div class="cc-stat">${fmtNum(stat.rows)} rows \u00B7 ${fmtMs(stat.duration_ms)}</div>`;
-      if (hasErr) html += `<div class="cc-err">${escHtml(stat.error)}</div>`;
-    } else {
-      html += '<div class="cc-stat">no data</div>';
+  // Collectors section
+  html += '<div class="section">';
+  html += '<div class="section-header"><span class="section-title">Collectors</span></div>';
+  html += '<div class="section-content">';
+  if (db.collectors && db.collectors.length > 0) {
+    html += '<div id="collector-list">';
+    for (const name of db.collectors) {
+      const stat = stats.find(s => s.name === name);
+      const hasErr = stat?.error;
+      const dotCls = hasErr ? 'err' : (stat ? 'ok' : 'off');
+      const isActive = selectedCollector === name;
+      html += `<div class="collector-row ${isActive ? 'active' : ''}" onclick="toggleCollector('${escHtml(name)}')">`;
+      html += `<div class="collector-status-dot ${dotCls}"></div>`;
+      html += `<span class="collector-name">${escHtml(name)}</span>`;
+      if (stat) {
+        html += `<span class="collector-stat">${fmtNum(stat.rows)} rows &middot; ${fmtMs(stat.duration_ms)}</span>`;
+        if (hasErr) html += `<span class="collector-err">${escHtml(stat.error)}</span>`;
+      } else {
+        html += '<span class="collector-stat">no data</span>';
+      }
+      html += '</div>';
+      if (isActive) {
+        html += '<div id="collector-data-panel" class="data-panel"><div style="padding:0.5rem 0;color:var(--text-muted)">Loading...</div></div>';
+      }
     }
     html += '</div>';
+  } else {
+    html += '<div class="empty-row">No collectors configured</div>';
   }
   html += '</div>';
+  html += '</div>';
 
-  html += '<div id="collector-data-panel"></div>';
-  el.innerHTML = html;
+  // Shippers section
+  html += '<div class="section">';
+  html += '<div class="section-header">';
+  html += '<span class="section-title">Shippers</span>';
+  html += `<button class="btn-secondary btn-sm" onclick="openShipperModal('${db.id}', 'webhook')">${ICON.plus} Add Shipper</button>`;
+  html += '</div>';
+  html += '<div class="section-content" id="shipper-list">';
+  if (shippers.length > 0) {
+    for (const shipper of shippers) {
+      const ss = shipperStatuses.find(s => s.shipper_id === shipper.id);
+      const sStatus = ss ? ss.status : 'off';
+      const ep = shipper.endpoint.length > 40 ? shipper.endpoint.substring(0, 40) + '...' : shipper.endpoint;
+      html += '<div class="shipper-row">';
+      html += '<div class="shipper-info">';
+      html += `<div class="shipper-name">${escHtml(shipper.name)}</div>`;
+      html += `<div class="shipper-endpoint">${escHtml(ep)}</div>`;
+      html += '</div>';
+      html += `<span class="badge ${shipper.shipper_type}">${escHtml(shipper.shipper_type)}</span>`;
+      html += `<span class="shipper-status ${sStatus}">${sStatus === 'off' ? 'idle' : sStatus}</span>`;
+      if (ss) html += `<span class="shipper-meta">${fmtBytes(ss.bytes)} &middot; ${timeAgo(ss.at)}</span>`;
+      html += `<button class="shipper-remove" onclick="event.stopPropagation(); removeShipper('${db.id}', '${shipper.id}')" title="Remove">${ICON.x}</button>`;
+      html += '</div>';
+    }
+  } else {
+    html += '<div class="empty-row">No shippers configured</div>';
+  }
+  html += '</div>';
+  html += '</div>';
 
-  // Load first collector
-  loadCollectorData(collectors[0]);
+  // Logs section
+  html += '<div class="section">';
+  html += '<div class="section-header"><span class="section-title">Logs</span></div>';
+  html += '<div class="section-content">';
+  html += '<div class="tabs">';
+  html += `<button class="tab ${activeLogTab === 'pipeline' ? 'active' : ''}" onclick="switchLogTab('pipeline')">Pipeline</button>`;
+  html += `<button class="tab ${activeLogTab === 'shipping' ? 'active' : ''}" onclick="switchLogTab('shipping')">Shipping</button>`;
+  html += '</div>';
+  html += '<div id="log-content"><div class="empty-row">Loading...</div></div>';
+  html += '</div>';
+  html += '</div>';
+
+  main.innerHTML = html;
+
+  // Load collector data if one was selected
+  if (selectedCollector) {
+    loadCollectorData(selectedCollector);
+  }
+
+  // Load logs
+  loadLogTab();
+}
+
+function updateDetailPage() {
+  if (!currentView) return;
+  // Full re-render to update status bar, collector stats, shipper statuses
+  renderDetailPage();
+}
+
+// === Collector expand/collapse ===
+
+function toggleCollector(name) {
+  if (selectedCollector === name) {
+    selectedCollector = null;
+    renderDetailPage();
+  } else {
+    selectedCollector = name;
+    renderDetailPage();
+  }
 }
 
 async function loadCollectorData(name) {
@@ -433,24 +362,23 @@ async function loadCollectorData(name) {
   const panel = $('#collector-data-panel');
   if (!panel) return;
 
-  // Highlight selected card
-  $$('.collector-card').forEach(c => c.classList.toggle('active', c.querySelector('.cc-name')?.textContent === name));
-
-  panel.innerHTML = '<div style="padding:0.5rem;font-size:0.8rem;color:var(--text-muted)">Loading...</div>';
-
-  const data = await fetchJSON(`/api/databases/${currentView.id}/collectors/${name}`);
-  renderCollectorDataPanel(panel, name, data.snapshot);
+  try {
+    const data = await fetchJSON(`/api/databases/${currentView.id}/collectors/${name}`);
+    renderCollectorDataPanel(panel, name, data.snapshot);
+  } catch (e) {
+    panel.innerHTML = `<div style="color:var(--red)">Error: ${escHtml(e.message)}</div>`;
+  }
 }
 
 function renderCollectorDataPanel(el, name, snapshot) {
   if (!snapshot || !snapshot.data) {
-    el.innerHTML = '<div class="detail-empty">No data yet</div>';
+    el.innerHTML = '<div style="color:var(--text-muted)">No data yet</div>';
     return;
   }
 
   const rows = Array.isArray(snapshot.data) ? snapshot.data : [snapshot.data];
   if (rows.length === 0) {
-    el.innerHTML = '<div class="detail-empty">Empty</div>';
+    el.innerHTML = '<div style="color:var(--text-muted)">Empty</div>';
     return;
   }
 
@@ -459,12 +387,12 @@ function renderCollectorDataPanel(el, name, snapshot) {
   const anonInfo = isAnon ? countAnonTokens(rows) : { total: 0, counts: {} };
 
   const ts = snapshot.collected_at ? timeAgo(snapshot.collected_at) : '';
-  let html = '<div class="collector-meta">';
-  html += `<span>${escHtml(name)} \u00B7 ${rows.length} rows \u00B7 ${ts}</span>`;
+  let html = '<div class="data-panel-header">';
+  html += `<span class="data-panel-meta">${rows.length} rows &middot; ${ts}</span>`;
   if (isAnon && anonInfo.total > 0) {
     const breakdown = Object.entries(anonInfo.counts).map(([k, v]) => `${v} ${k}`).join(', ');
     html += `<span class="anon-summary" title="${escHtml(breakdown)}">`;
-    html += `<svg class="anon-shield" viewBox="0 0 16 16" width="12" height="12"><path d="M8 1L2 4v4c0 3.5 2.6 6.4 6 7 3.4-.6 6-3.5 6-7V4L8 1z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 8l2 2 3.5-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    html += `<svg viewBox="0 0 16 16" width="13" height="13"><path d="M8 1L2 4v4c0 3.5 2.6 6.4 6 7 3.4-.6 6-3.5 6-7V4L8 1z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 8l2 2 3.5-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     html += ` ${anonInfo.total} anonymized</span>`;
   }
   html += '</div>';
@@ -494,113 +422,66 @@ function renderCollectorDataPanel(el, name, snapshot) {
   el.innerHTML = html;
 }
 
-// -- Anonymize detail --
+// === Log Tabs ===
 
-async function renderAnonymizeDetail(el, db) {
-  let html = '<div class="detail-header"><h3><span class="detail-icon">' + nodeIcon('anonymize') + '</span> Anonymization</h3></div>';
-  html += '<div class="detail-info">';
-  html += `<p>Status: <strong class="ok">${db.anonymize ? 'Enabled' : 'Disabled'}</strong></p>`;
-  html += '<p>Scrubs emails, UUIDs, IPs, tokens, and credit card numbers from collected queries before storage.</p>';
-  html += '</div>';
-
-  // Show recent pipeline events for context
-  const data = await fetchJSON(`/api/databases/${db.id}/pipeline`);
-  const events = data.events || [];
-  if (events.length > 0) {
-    html += '<div class="detail-subheader">Recent Pipeline Events</div>';
-    html += renderPipelineEvents(events);
-  }
-
-  el.innerHTML = html;
+function switchLogTab(tab) {
+  activeLogTab = tab;
+  $$('.tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === tab));
+  loadLogTab();
 }
 
-// -- Store detail --
+async function loadLogTab() {
+  if (!currentView) return;
+  const el = $('#log-content');
+  if (!el) return;
 
-async function renderStoreDetail(el, db) {
-  let html = '<div class="detail-header"><h3><span class="detail-icon">' + nodeIcon('store') + '</span> Local Store</h3></div>';
-  html += '<div class="detail-info">';
-  html += '<p>Engine: <strong>SQLite</strong></p>';
-  html += '<p>All collected snapshots are stored locally before shipping.</p>';
-  html += '</div>';
-
-  const data = await fetchJSON(`/api/databases/${db.id}/pipeline`);
-  const events = data.events || [];
-  if (events.length > 0) {
-    html += '<div class="detail-subheader">Recent Pipeline Events</div>';
-    html += renderPipelineEvents(events);
-  }
-
-  el.innerHTML = html;
-}
-
-// -- Shipper detail --
-
-async function renderShipperDetail(el, db, shipperId) {
-  const shipper = db.shippers.find(s => s.id === shipperId);
-  if (!shipper) {
-    el.innerHTML = '<div class="detail-empty">Shipper not found</div>';
-    return;
-  }
-
-  const rs = db.runtime_status;
-  const ss = (rs?.shipper_statuses || []).find(s => s.shipper_id === shipperId);
-
-  let html = '<div class="detail-header">';
-  html += `<h3><span class="detail-icon">${shipperIcon(shipper.shipper_type)}</span> ${escHtml(shipper.name)}</h3>`;
-  html += `<button class="btn-danger btn-sm" onclick="removeShipper('${db.id}', '${shipperId}')">Remove</button>`;
-  html += '</div>';
-
-  html += '<div class="detail-info">';
-  html += `<p>Type: <strong>${escHtml(shipper.shipper_type)}</strong></p>`;
-  html += `<p>Endpoint: <code>${escHtml(shipper.endpoint)}</code></p>`;
-  html += `<p>Token: <code>${shipper.token ? '***' : 'none'}</code></p>`;
-  html += `<p>Enabled: <strong>${shipper.enabled ? 'Yes' : 'No'}</strong></p>`;
-  if (ss) {
-    html += `<p>Last status: <strong class="${ss.status === 'ok' ? 'ok' : 'err'}">${ss.status}</strong> \u00B7 ${fmtBytes(ss.bytes)} \u00B7 ${timeAgo(ss.at)}</p>`;
-    if (ss.error) html += `<p class="err">${escHtml(ss.error)}</p>`;
-  }
-  html += '</div>';
-
-  // Shipping log
-  const data = await fetchJSON(`/api/databases/${db.id}/shipping`);
-  const entries = (data.entries || []).filter(e => e.shipper_id === shipperId || !e.shipper_id);
-  if (entries.length > 0) {
-    html += '<div class="detail-subheader">Shipping Log</div>';
-    html += '<div class="pipeline-log">';
-    for (const entry of entries) {
-      html += `<div class="ship-entry">`;
-      html += `<span style="color:var(--text-muted);width:60px">${fmtTime(entry.created_at)}</span>`;
-      html += `<span class="se-status ${entry.status}">${entry.status}</span>`;
-      html += `<span>${fmtBytes(entry.bytes)}</span>`;
-      if (entry.error) html += `<span class="err">${escHtml(entry.error)}</span>`;
+  try {
+    if (activeLogTab === 'pipeline') {
+      const data = await fetchJSON(`/api/databases/${currentView.id}/pipeline`);
+      const events = data.events || [];
+      if (events.length === 0) {
+        el.innerHTML = '<div class="empty-row">No pipeline events yet</div>';
+        return;
+      }
+      let html = '<div class="log-scroll">';
+      for (const ev of events.slice(0, 40)) {
+        const collectors = ev.collectors_json || [];
+        const collStr = collectors.map(c =>
+          `${c.name}: ${fmtNum(c.rows)} ${fmtMs(c.duration_ms)}${c.error ? ' ERR' : ''}`
+        ).join(' | ');
+        html += '<div class="log-entry">';
+        html += `<span class="log-time">${fmtTime(ev.created_at)}</span>`;
+        html += `<span class="log-type ${ev.tick_type}">${ev.tick_type}</span>`;
+        html += `<span class="log-detail">${escHtml(collStr)}</span>`;
+        html += '</div>';
+      }
       html += '</div>';
+      el.innerHTML = html;
+    } else {
+      const data = await fetchJSON(`/api/databases/${currentView.id}/shipping`);
+      const entries = data.entries || [];
+      if (entries.length === 0) {
+        el.innerHTML = '<div class="empty-row">No shipping events yet</div>';
+        return;
+      }
+      let html = '<div class="log-scroll">';
+      for (const entry of entries.slice(0, 40)) {
+        html += '<div class="log-entry">';
+        html += `<span class="log-time">${fmtTime(entry.created_at)}</span>`;
+        html += `<span class="ship-status ${entry.status}">${entry.status}</span>`;
+        html += `<span class="log-detail">${fmtBytes(entry.bytes)}${entry.error ? ' &middot; ' + escHtml(entry.error) : ''}</span>`;
+        html += '</div>';
+      }
+      html += '</div>';
+      el.innerHTML = html;
     }
-    html += '</div>';
+  } catch (e) {
+    el.innerHTML = `<div class="empty-row" style="color:var(--red)">Error: ${escHtml(e.message)}</div>`;
   }
-
-  el.innerHTML = html;
 }
 
-// -- Shared renderers --
+// === Anonymization helpers ===
 
-function renderPipelineEvents(events) {
-  let html = '<div class="pipeline-log">';
-  for (const ev of events.slice(0, 30)) {
-    const collectors = ev.collectors_json || [];
-    const collStr = collectors.map(c =>
-      `${c.name}: ${fmtNum(c.rows)} ${fmtMs(c.duration_ms)}${c.error ? ' ERR' : ''}`
-    ).join(' | ');
-    html += `<div class="pipeline-entry">`;
-    html += `<span class="pe-time">${fmtTime(ev.created_at)}</span>`;
-    html += `<span class="pe-type pe-${ev.tick_type}">${ev.tick_type}</span>`;
-    html += `<span class="pe-collectors">${escHtml(collStr)}</span>`;
-    html += '</div>';
-  }
-  html += '</div>';
-  return html;
-}
-
-// Anonymization helpers
 const ANON_TOKENS = [
   { re: /&lt;email&gt;/g, label: 'email', cls: 'anon-email' },
   { re: /&lt;uuid&gt;/g, label: 'uuid', cls: 'anon-uuid' },
@@ -647,14 +528,14 @@ function openDrawer(id) {
       $('#drawer-title').textContent = 'Edit Database';
       $('#edit-id').value = id;
       $('#db-name').value = db.name;
-      $('#db-type').value = db.db_type || 'postgres';
+      const dbType = db.db_type || 'postgres';
+      $('#db-type').value = dbType;
       $('#db-env').value = db.environment || 'production';
       $('#db-url').value = db.url;
+      $('#db-url').placeholder = URL_PLACEHOLDERS[dbType] || URL_PLACEHOLDERS.postgres;
       $('#db-fast').value = db.fast_interval;
       $('#db-slow').value = db.slow_interval;
-      $$('#collectors-group input[type="checkbox"]').forEach(cb => {
-        cb.checked = db.collectors.includes(cb.value);
-      });
+      renderCollectorCheckboxes(dbType, db.collectors);
       $('#anon-enabled').checked = db.anonymize !== false;
       updateAnonHint();
       $('#btn-delete').style.display = 'inline-flex';
@@ -677,17 +558,35 @@ function resetDrawer() {
   $('#db-type').value = 'postgres';
   $('#db-env').value = 'production';
   $('#db-url').value = '';
+  $('#db-url').placeholder = URL_PLACEHOLDERS.postgres;
   $('#db-fast').value = '30';
   $('#db-slow').value = '300';
-  $$('#collectors-group input[type="checkbox"]').forEach(cb => {
-    cb.checked = ['statements', 'activity', 'locks', 'tables', 'schema'].includes(cb.value);
-  });
+  renderCollectorCheckboxes('postgres');
   $('#anon-enabled').checked = true;
   updateAnonHint();
   $('#test-result').className = 'test-result';
   $('#test-result').textContent = '';
   $('#btn-delete').style.display = 'none';
   editingId = null;
+}
+
+function onDbTypeChange() {
+  const dbType = $('#db-type').value;
+  $('#db-url').placeholder = URL_PLACEHOLDERS[dbType] || URL_PLACEHOLDERS.postgres;
+  renderCollectorCheckboxes(dbType);
+}
+
+function renderCollectorCheckboxes(dbType, selectedCollectors) {
+  const group = $('#collectors-group');
+  const collectors = COLLECTORS_BY_TYPE[dbType] || COLLECTORS_BY_TYPE.postgres;
+  let html = '';
+  for (const c of collectors) {
+    const checked = selectedCollectors
+      ? selectedCollectors.includes(c.name)
+      : c.checked;
+    html += `<label class="checkbox"><input type="checkbox" value="${c.name}" ${checked ? 'checked' : ''}> ${c.name}</label>`;
+  }
+  group.innerHTML = html;
 }
 
 function onEnvChange() {
@@ -715,6 +614,7 @@ function editDatabase(id) { openDrawer(id); }
 
 async function testConnection() {
   const url = $('#db-url').value;
+  const dbType = $('#db-type').value;
   const el = $('#test-result');
   el.className = 'test-result loading';
   el.textContent = 'Testing...';
@@ -722,7 +622,7 @@ async function testConnection() {
     const res = await fetchJSON('/api/test-connection', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, db_type: dbType }),
     });
     if (res.ok) {
       el.className = 'test-result success';
@@ -789,32 +689,6 @@ async function deleteDatabase() {
   }
 }
 
-// === Drag and Drop ===
-
-function onPaletteDragStart(e, shipperType) {
-  e.dataTransfer.setData('text/plain', shipperType);
-  e.dataTransfer.effectAllowed = 'copy';
-}
-
-function onPipeDragOver(e) {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'copy';
-  e.currentTarget.classList.add('drag-over');
-}
-
-function onPipeDragLeave(e) {
-  e.currentTarget.classList.remove('drag-over');
-}
-
-function onPipeDrop(e) {
-  e.preventDefault();
-  e.currentTarget.classList.remove('drag-over');
-  const shipperType = e.dataTransfer.getData('text/plain');
-  const dbId = e.currentTarget.dataset.dbId;
-  if (!shipperType || !dbId) return;
-  openShipperModal(dbId, shipperType);
-}
-
 // === Shipper Modal ===
 
 function openShipperModal(dbId, shipperType) {
@@ -823,7 +697,7 @@ function openShipperModal(dbId, shipperType) {
   $('#sm-overlay').style.display = 'block';
   modal.dataset.dbId = dbId;
   modal.dataset.shipperType = shipperType;
-  $('#sm-type-label').innerHTML = '<span class="sm-icon">' + shipperIcon(shipperType) + '</span> ' + shipperType.charAt(0).toUpperCase() + shipperType.slice(1);
+  $('#sm-type-label').innerHTML = '<span class="modal-icon">' + shipperIcon(shipperType) + '</span> ' + shipperType.charAt(0).toUpperCase() + shipperType.slice(1);
   $('#sm-name').value = shipperType === 'datapace' ? 'Datapace Cloud' : '';
   $('#sm-endpoint').value = shipperType === 'datapace' ? 'https://api.datapace.ai/v1/ingest' : '';
   $('#sm-token').value = '';
@@ -865,7 +739,6 @@ async function removeShipper(dbId, shipperId) {
   try {
     const res = await fetchJSON(`/api/databases/${dbId}/shippers/${shipperId}`, { method: 'DELETE' });
     if (res.ok) {
-      selectedNode = null;
       await loadDatabases();
     } else {
       alert(res.error || 'Failed to remove shipper');

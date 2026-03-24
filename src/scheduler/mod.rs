@@ -3,7 +3,7 @@ pub mod manager;
 pub use manager::SchedulerManager;
 
 use crate::anonymizer;
-use crate::collector::capability::Capabilities;
+use crate::collector::capability::{Capabilities, CapabilitySet};
 use crate::collector::pool::DatabasePool;
 use crate::collector::registry;
 use crate::collector::Collector;
@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 pub struct Scheduler {
     pool: Arc<dyn DatabasePool>,
     store: Arc<Store>,
-    capabilities: Capabilities,
+    capabilities: CapabilitySet,
     fast_interval: Duration,
     slow_interval: Duration,
     shutdown_rx: watch::Receiver<bool>,
@@ -40,7 +40,7 @@ impl Scheduler {
         Self {
             pool,
             store,
-            capabilities,
+            capabilities: CapabilitySet::Postgres(capabilities),
             fast_interval,
             slow_interval,
             shutdown_rx,
@@ -96,21 +96,23 @@ impl Scheduler {
 
     async fn run_fast_collectors(&self) {
         debug!("Fast tick");
-        let all_names: Vec<String> = registry::all_collector_names()
+        let db_type = self.pool.db_type();
+        let all_names: Vec<String> = registry::all_collector_names_for(db_type)
             .into_iter()
             .map(String::from)
             .collect();
-        let collectors = registry::build_collectors_for_tick("fast", &all_names);
+        let collectors = registry::build_collectors_for_tick(db_type, "fast", &all_names);
         self.run_collectors(&collectors).await;
     }
 
     async fn run_slow_collectors(&self) {
         debug!("Slow tick");
-        let all_names: Vec<String> = registry::all_collector_names()
+        let db_type = self.pool.db_type();
+        let all_names: Vec<String> = registry::all_collector_names_for(db_type)
             .into_iter()
             .map(String::from)
             .collect();
-        let collectors = registry::build_collectors_for_tick("slow", &all_names);
+        let collectors = registry::build_collectors_for_tick(db_type, "slow", &all_names);
         self.run_collectors(&collectors).await;
     }
 
@@ -134,6 +136,10 @@ impl Scheduler {
 
             match collector.collect(self.pool.as_ref()).await {
                 Ok(mut snapshot) => {
+                    // Stamp idempotency key (legacy scheduler — no source_id)
+                    snapshot.idempotency_key =
+                        anonymizer::idempotency_key("", collector.name(), &snapshot.collected_at);
+
                     // Anonymize query text in the snapshot data
                     anonymize_snapshot_queries(&mut snapshot);
 

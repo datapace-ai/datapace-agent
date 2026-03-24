@@ -22,6 +22,8 @@ pub struct Config {
     pub agent: AgentConfig,
     /// Optional — if absent, agent starts in UI-only mode (multi-DB via UI).
     pub postgres: Option<PostgresConfig>,
+    /// Optional MongoDB configuration.
+    pub mongodb: Option<MongoDbConfig>,
     #[serde(default)]
     pub shipper: ShipperConfig,
     #[serde(default)]
@@ -90,6 +92,16 @@ fn default_fast_interval() -> u64 {
 }
 fn default_slow_interval() -> u64 {
     300
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MongoDbConfig {
+    pub url: String,
+    #[serde(default = "default_fast_interval")]
+    pub fast_interval: u64,
+    #[serde(default = "default_slow_interval")]
+    pub slow_interval: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -179,6 +191,27 @@ impl Config {
             if pg.slow_interval < pg.fast_interval {
                 return Err(ConfigError::Validation(
                     "postgres.slow_interval must be >= fast_interval".into(),
+                ));
+            }
+        }
+
+        if let Some(ref mongo) = self.mongodb {
+            if mongo.url.is_empty() {
+                return Err(ConfigError::Validation("mongodb.url is required".into()));
+            }
+            if !mongo.url.starts_with("mongodb://") && !mongo.url.starts_with("mongodb+srv://") {
+                return Err(ConfigError::Validation(
+                    "mongodb.url must start with mongodb:// or mongodb+srv://".into(),
+                ));
+            }
+            if mongo.fast_interval < 5 {
+                return Err(ConfigError::Validation(
+                    "mongodb.fast_interval must be >= 5 seconds".into(),
+                ));
+            }
+            if mongo.slow_interval < mongo.fast_interval {
+                return Err(ConfigError::Validation(
+                    "mongodb.slow_interval must be >= fast_interval".into(),
                 ));
             }
         }

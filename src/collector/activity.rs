@@ -68,6 +68,7 @@ impl Collector for ActivityCollector {
             collector: self.name().into(),
             data: serde_json::to_value(&rows).unwrap_or_default(),
             collected_at: Utc::now(),
+            idempotency_key: String::new(),
         })
     }
 }

@@ -14,6 +14,9 @@ pub struct Snapshot {
     pub data: serde_json::Value,
     /// When the snapshot was taken
     pub collected_at: DateTime<Utc>,
+    /// Stable dedup key: hash of (source_id, collector, collected_at)
+    #[serde(default)]
+    pub idempotency_key: String,
 }
 
 /// A query fingerprint record for the `query_fingerprints` table.

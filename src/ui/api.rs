@@ -130,10 +130,8 @@ fn default_slow() -> u64 {
     300
 }
 fn default_collectors() -> Vec<String> {
-    crate::collector::registry::all_collector_names()
-        .into_iter()
-        .map(String::from)
-        .collect()
+    // Default will be overridden in add_database based on db_type
+    vec![]
 }
 
 /// Default anonymization based on environment: enabled for production/staging, disabled otherwise.
@@ -149,11 +147,25 @@ pub async fn add_database(
     if req.name.is_empty() {
         return Json(serde_json::json!({"ok": false, "error": "Name is required"}));
     }
-    if !req.url.starts_with("postgres://") && !req.url.starts_with("postgresql://") {
-        return Json(
-            serde_json::json!({"ok": false, "error": "URL must start with postgres:// or postgresql://"}),
-        );
+
+    // URL validation based on db_type
+    match req.db_type.as_str() {
+        "mongodb" => {
+            if !req.url.starts_with("mongodb://") && !req.url.starts_with("mongodb+srv://") {
+                return Json(
+                    serde_json::json!({"ok": false, "error": "URL must start with mongodb:// or mongodb+srv://"}),
+                );
+            }
+        }
+        "postgres" | _ => {
+            if !req.url.starts_with("postgres://") && !req.url.starts_with("postgresql://") {
+                return Json(
+                    serde_json::json!({"ok": false, "error": "URL must start with postgres:// or postgresql://"}),
+                );
+            }
+        }
     }
+
     if req.fast_interval < 5 {
         return Json(serde_json::json!({"ok": false, "error": "Fast interval must be >= 5"}));
     }
@@ -169,6 +181,16 @@ pub async fn add_database(
         .anonymize
         .unwrap_or_else(|| default_anonymize_for_env(&req.environment));
 
+    // Default collectors per db_type if none specified
+    let collectors = if req.collectors.is_empty() {
+        crate::collector::registry::all_collector_names_for(&req.db_type)
+            .into_iter()
+            .map(String::from)
+            .collect()
+    } else {
+        req.collectors
+    };
+
     let entry = DatabaseEntry {
         id: id.clone(),
         name: req.name,
@@ -178,7 +200,7 @@ pub async fn add_database(
         pool_size: req.pool_size,
         fast_interval: req.fast_interval,
         slow_interval: req.slow_interval,
-        collectors: req.collectors,
+        collectors,
         anonymize,
         shippers: req.shippers,
         status: "stopped".into(),
@@ -286,10 +308,19 @@ pub async fn delete_database(
 #[derive(Deserialize)]
 pub struct TestConnectionRequest {
     url: String,
+    #[serde(default = "default_db_type")]
+    db_type: String,
 }
 
 pub async fn test_database(Json(req): Json<TestConnectionRequest>) -> Json<serde_json::Value> {
-    if !req.url.starts_with("postgres://") && !req.url.starts_with("postgresql://") {
+    match req.db_type.as_str() {
+        "mongodb" => test_mongodb_connection(&req.url).await,
+        _ => test_postgres_connection(&req.url).await,
+    }
+}
+
+async fn test_postgres_connection(url: &str) -> Json<serde_json::Value> {
+    if !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
         return Json(serde_json::json!({
             "ok": false,
             "error": "URL must start with postgres:// or postgresql://"
@@ -299,7 +330,7 @@ pub async fn test_database(Json(req): Json<TestConnectionRequest>) -> Json<serde
     let pool = match PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_secs(10))
-        .connect(&req.url)
+        .connect(url)
         .await
     {
         Ok(p) => p,
@@ -323,6 +354,65 @@ pub async fn test_database(Json(req): Json<TestConnectionRequest>) -> Json<serde
         Err(e) => Json(serde_json::json!({
             "ok": false,
             "error": format!("Query failed: {e}")
+        })),
+    }
+}
+
+async fn test_mongodb_connection(url: &str) -> Json<serde_json::Value> {
+    if !url.starts_with("mongodb://") && !url.starts_with("mongodb+srv://") {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "URL must start with mongodb:// or mongodb+srv://"
+        }));
+    }
+
+    let client_options = match mongodb::options::ClientOptions::parse(url).await {
+        Ok(opts) => opts,
+        Err(e) => {
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": format!("Invalid connection string: {e}")
+            }));
+        }
+    };
+
+    let client = match mongodb::Client::with_options(client_options) {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": format!("Client creation failed: {e}")
+            }));
+        }
+    };
+
+    // Extract db name from URL, default to "admin"
+    let db_name = url
+        .split("://")
+        .nth(1)
+        .and_then(|s| s.split('/').nth(1))
+        .and_then(|s| {
+            let name = s.split('?').next().unwrap_or(s);
+            if name.is_empty() {
+                None
+            } else {
+                Some(name)
+            }
+        })
+        .unwrap_or("admin");
+
+    let db = client.database(db_name);
+    match db.run_command(bson::doc! { "serverStatus": 1 }, None).await {
+        Ok(doc) => {
+            let version = doc.get_str("version").unwrap_or("unknown").to_string();
+            Json(serde_json::json!({
+                "ok": true,
+                "version": format!("MongoDB {version}")
+            }))
+        }
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "error": format!("Connection failed: {e}")
         })),
     }
 }
