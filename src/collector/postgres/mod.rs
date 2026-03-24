@@ -13,8 +13,8 @@ mod queries;
 use crate::collector::{Collector, CollectorError};
 use crate::config::{DatabaseType, Provider};
 use crate::payload::{
-    DatabaseInfo, IndexMetadata, IndexStats, Payload, QueryStats, SchemaMetadata,
-    TableMetadata, TableStats,
+    DatabaseInfo, IndexMetadata, IndexStats, Payload, QueryStats, SchemaMetadata, TableMetadata,
+    TableStats,
 };
 use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -66,9 +66,7 @@ impl PostgresCollector {
     }
 
     async fn get_version(pool: &PgPool) -> Result<String, CollectorError> {
-        let row: (String,) = sqlx::query_as("SELECT version()")
-            .fetch_one(pool)
-            .await?;
+        let row: (String,) = sqlx::query_as("SELECT version()").fetch_one(pool).await?;
         Ok(row.0)
     }
 
@@ -231,9 +229,12 @@ impl Collector for PostgresCollector {
             database_type: "postgres".to_string(),
             version: self.version.clone(),
             provider: self.detected_provider.clone(),
-            provider_metadata: providers::get_provider_metadata(&self.pool, &self.detected_provider)
-                .await
-                .unwrap_or_default(),
+            provider_metadata: providers::get_provider_metadata(
+                &self.pool,
+                &self.detected_provider,
+            )
+            .await
+            .unwrap_or_default(),
         };
 
         let payload = Payload::new(database_info)
@@ -245,7 +246,11 @@ impl Collector for PostgresCollector {
 
         info!(
             tables = payload.schema.as_ref().map(|s| s.tables.len()).unwrap_or(0),
-            indexes = payload.schema.as_ref().map(|s| s.indexes.len()).unwrap_or(0),
+            indexes = payload
+                .schema
+                .as_ref()
+                .map(|s| s.indexes.len())
+                .unwrap_or(0),
             queries = payload.query_stats.as_ref().map(|q| q.len()).unwrap_or(0),
             "Metrics collection complete"
         );
@@ -265,8 +270,8 @@ impl Collector for PostgresCollector {
         &self.detected_provider
     }
 
-    fn version(&self) -> Option<&str> {
-        self.version.as_deref()
+    fn version(&self) -> Option<String> {
+        self.version.clone()
     }
 
     fn database_type(&self) -> DatabaseType {

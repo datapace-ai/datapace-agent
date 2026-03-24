@@ -14,11 +14,15 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use datapace_agent::{
-    collector, config::Config, scheduler::Scheduler, uploader::{Uploader, UploaderConfig},
+    collector,
+    config::Config,
+    health::{self, HealthState, SharedHealthState},
+    scheduler::Scheduler,
+    uploader::{Upload, Uploader, UploaderConfig},
 };
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::watch;
+use tokio::sync::{watch, RwLock};
 use tracing::{error, info, Level};
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -85,16 +89,26 @@ async fn main() -> Result<()> {
     );
     let uploader = Uploader::new(uploader_config).context("Failed to create uploader")?;
 
+    let uploader: Arc<dyn Upload> = Arc::new(uploader);
+
     // Handle dry-run mode
     if args.dry_run {
         let (_, shutdown_rx) = watch::channel(false);
         let scheduler = Scheduler::new(
             Arc::from(collector),
-            Arc::new(uploader),
+            Arc::clone(&uploader),
             config.collection.interval(),
             shutdown_rx,
+            None,
         );
         return scheduler.run_once().await.map_err(Into::into);
+    }
+
+    // Create shared health state
+    let health_state: SharedHealthState = Arc::new(RwLock::new(HealthState::new()));
+    {
+        let mut hs = health_state.write().await;
+        hs.database_connected = true;
     }
 
     // Setup shutdown signal handling
@@ -107,12 +121,25 @@ async fn main() -> Result<()> {
         let _ = shutdown_tx.send(true);
     });
 
+    // Start health server if enabled
+    if config.health.enabled {
+        let hs = health_state.clone();
+        let hc = config.health.clone();
+        let hrx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = health::start_health_server(&hc, hs, hrx).await {
+                error!(error = %e, "Health server failed");
+            }
+        });
+    }
+
     // Run the scheduler
     let mut scheduler = Scheduler::new(
         Arc::from(collector),
-        Arc::new(uploader),
+        uploader,
         config.collection.interval(),
         shutdown_rx,
+        Some(health_state),
     );
 
     info!(
@@ -146,7 +173,8 @@ fn setup_logging(args: &Args, config: &Config) {
         .add_directive("sqlx=warn".parse().unwrap())
         .add_directive("reqwest=warn".parse().unwrap());
 
-    let use_json = args.json_logs || config.logging.format == datapace_agent::config::LogFormat::Json;
+    let use_json =
+        args.json_logs || config.logging.format == datapace_agent::config::LogFormat::Json;
 
     if use_json {
         fmt()
@@ -155,23 +183,19 @@ fn setup_logging(args: &Args, config: &Config) {
             .with_target(false)
             .init();
     } else {
-        fmt()
-            .with_env_filter(filter)
-            .with_target(false)
-            .init();
+        fmt().with_env_filter(filter).with_target(false).init();
     }
 }
 
-async fn test_connections(
-    config: &Config,
-    collector: &dyn collector::Collector,
-) -> Result<()> {
+async fn test_connections(config: &Config, collector: &dyn collector::Collector) -> Result<()> {
     println!("Testing database connection...");
 
     match collector.test_connection().await {
-        Ok(()) => println!("  Database: OK (provider: {}, version: {})",
+        Ok(()) => println!(
+            "  Database: OK (provider: {}, version: {})",
             collector.provider(),
-            collector.version().unwrap_or("unknown")),
+            collector.version().as_deref().unwrap_or("unknown")
+        ),
         Err(e) => {
             eprintln!("  Database: FAILED - {}", e);
             return Err(e.into());

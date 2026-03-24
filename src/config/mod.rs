@@ -73,11 +73,11 @@ pub enum DatabaseType {
     Weaviate,
     Qdrant,
     Chroma,
-    Pgvector,  // PostgreSQL extension
+    Pgvector, // PostgreSQL extension
 
     // Graph databases
     Neo4j,
-    Neptune,      // AWS Neptune
+    Neptune, // AWS Neptune
     Arangodb,
     Janusgraph,
     Tigergraph,
@@ -101,6 +101,11 @@ impl DatabaseType {
             }
             if url_lower.contains("yugabyte") {
                 return Ok(DatabaseType::Yugabytedb);
+            }
+            if url_lower.contains("redshift.amazonaws.com")
+                || url_lower.contains("redshift-serverless.amazonaws.com")
+            {
+                return Ok(DatabaseType::Redshift);
             }
             return Ok(DatabaseType::Postgres);
         }
@@ -264,7 +269,7 @@ impl DatabaseType {
             DatabaseType::Couchbase => &["couchbase://", "couchbases://"],
             DatabaseType::Snowflake => &["https://"],
             DatabaseType::Bigquery => &["bigquery://"],
-            DatabaseType::Redshift => &["postgres://"],  // Redshift uses PostgreSQL protocol
+            DatabaseType::Redshift => &["postgres://"], // Redshift uses PostgreSQL protocol
             DatabaseType::Dynamodb => &["https://"],
             DatabaseType::Influxdb => &["influxdb://", "https://"],
             DatabaseType::Timescaledb => &["postgres://", "postgresql://"],
@@ -712,6 +717,7 @@ impl Config {
             },
             database: DatabaseConfig {
                 url: database_url,
+                db_type: DatabaseType::default(),
                 provider: Provider::Auto,
                 pool: PoolConfig::default(),
             },

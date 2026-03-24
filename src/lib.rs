@@ -36,6 +36,7 @@
 
 pub mod collector;
 pub mod config;
+pub mod health;
 pub mod payload;
 pub mod scheduler;
 pub mod uploader;

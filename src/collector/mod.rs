@@ -58,9 +58,7 @@ impl From<sqlx::Error> for CollectorError {
                     CollectorError::QueryError(msg.to_string())
                 }
             }
-            sqlx::Error::Io(io_err) => {
-                CollectorError::ConnectionError(io_err.to_string())
-            }
+            sqlx::Error::Io(io_err) => CollectorError::ConnectionError(io_err.to_string()),
             _ => CollectorError::InternalError(err.to_string()),
         }
     }
@@ -97,7 +95,7 @@ impl From<sqlx::Error> for CollectorError {
 ///         // Return detected cloud provider (e.g., "rds", "neon", "generic")
 ///     }
 ///
-///     fn version(&self) -> Option<&str> {
+///     fn version(&self) -> Option<String> {
 ///         // Return database version
 ///     }
 ///
@@ -106,6 +104,7 @@ impl From<sqlx::Error> for CollectorError {
 ///     }
 /// }
 /// ```
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait Collector: Send + Sync {
     /// Collect metrics from the database
@@ -123,7 +122,7 @@ pub trait Collector: Send + Sync {
     fn provider(&self) -> &str;
 
     /// Get the database version
-    fn version(&self) -> Option<&str>;
+    fn version(&self) -> Option<String>;
 
     /// Get the database type
     fn database_type(&self) -> DatabaseType;
@@ -179,124 +178,105 @@ pub async fn create_collector(
         }
 
         // Coming soon - Relational
-        DatabaseType::Mysql | DatabaseType::Tidb => {
-            Err(CollectorError::UnsupportedDatabase(
-                "MySQL/TiDB support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Mysql | DatabaseType::Tidb => Err(CollectorError::UnsupportedDatabase(
+            "MySQL/TiDB support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Sqlserver => {
-            Err(CollectorError::UnsupportedDatabase(
-                "SQL Server support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Sqlserver => Err(CollectorError::UnsupportedDatabase(
+            "SQL Server support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Oracle => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Oracle support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Oracle => Err(CollectorError::UnsupportedDatabase(
+            "Oracle support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Db2 => {
-            Err(CollectorError::UnsupportedDatabase(
-                "IBM DB2 support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Db2 => Err(CollectorError::UnsupportedDatabase(
+            "IBM DB2 support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
         // Coming soon - Document
-        DatabaseType::Mongodb => {
-            Err(CollectorError::UnsupportedDatabase(
-                "MongoDB support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Mongodb => Err(CollectorError::UnsupportedDatabase(
+            "MongoDB support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Couchbase => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Couchbase support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Couchbase => Err(CollectorError::UnsupportedDatabase(
+            "Couchbase support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Cosmosdb => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Azure Cosmos DB support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Cosmosdb => Err(CollectorError::UnsupportedDatabase(
+            "Azure Cosmos DB support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
         // Coming soon - Analytics
-        DatabaseType::Elasticsearch => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Elasticsearch support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Elasticsearch => Err(CollectorError::UnsupportedDatabase(
+            "Elasticsearch support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Clickhouse => {
-            Err(CollectorError::UnsupportedDatabase(
-                "ClickHouse support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Clickhouse => Err(CollectorError::UnsupportedDatabase(
+            "ClickHouse support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Snowflake => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Snowflake support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Snowflake => Err(CollectorError::UnsupportedDatabase(
+            "Snowflake support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Bigquery => {
-            Err(CollectorError::UnsupportedDatabase(
-                "BigQuery support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Bigquery => Err(CollectorError::UnsupportedDatabase(
+            "BigQuery support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
         // Coming soon - Key-Value
-        DatabaseType::Redis => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Redis support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Redis => Err(CollectorError::UnsupportedDatabase(
+            "Redis support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Dynamodb => {
-            Err(CollectorError::UnsupportedDatabase(
-                "DynamoDB support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Dynamodb => Err(CollectorError::UnsupportedDatabase(
+            "DynamoDB support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
         // Coming soon - Time-series
-        DatabaseType::Influxdb => {
-            Err(CollectorError::UnsupportedDatabase(
-                "InfluxDB support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Influxdb => Err(CollectorError::UnsupportedDatabase(
+            "InfluxDB support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
         // Coming soon - Vector databases
-        DatabaseType::Pinecone => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Pinecone support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Pinecone => Err(CollectorError::UnsupportedDatabase(
+            "Pinecone support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Milvus => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Milvus support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Milvus => Err(CollectorError::UnsupportedDatabase(
+            "Milvus support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Weaviate => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Weaviate support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Weaviate => Err(CollectorError::UnsupportedDatabase(
+            "Weaviate support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Qdrant => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Qdrant support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Qdrant => Err(CollectorError::UnsupportedDatabase(
+            "Qdrant support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Chroma => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Chroma support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Chroma => Err(CollectorError::UnsupportedDatabase(
+            "Chroma support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
         DatabaseType::Pgvector => {
             // pgvector is a PostgreSQL extension, use PostgreSQL collector
@@ -305,47 +285,40 @@ pub async fn create_collector(
         }
 
         // Coming soon - Graph databases
-        DatabaseType::Neo4j => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Neo4j support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Neo4j => Err(CollectorError::UnsupportedDatabase(
+            "Neo4j support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Neptune => {
-            Err(CollectorError::UnsupportedDatabase(
-                "AWS Neptune support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Neptune => Err(CollectorError::UnsupportedDatabase(
+            "AWS Neptune support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Arangodb => {
-            Err(CollectorError::UnsupportedDatabase(
-                "ArangoDB support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Arangodb => Err(CollectorError::UnsupportedDatabase(
+            "ArangoDB support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Janusgraph => {
-            Err(CollectorError::UnsupportedDatabase(
-                "JanusGraph support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Janusgraph => Err(CollectorError::UnsupportedDatabase(
+            "JanusGraph support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Tigergraph => {
-            Err(CollectorError::UnsupportedDatabase(
-                "TigerGraph support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Tigergraph => Err(CollectorError::UnsupportedDatabase(
+            "TigerGraph support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Dgraph => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Dgraph support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Dgraph => Err(CollectorError::UnsupportedDatabase(
+            "Dgraph support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
 
-        DatabaseType::Memgraph => {
-            Err(CollectorError::UnsupportedDatabase(
-                "Memgraph support is coming soon. See docs/EXTENDING.md for contribution guide.".to_string()
-            ))
-        }
+        DatabaseType::Memgraph => Err(CollectorError::UnsupportedDatabase(
+            "Memgraph support is coming soon. See docs/EXTENDING.md for contribution guide."
+                .to_string(),
+        )),
     }
 }
 

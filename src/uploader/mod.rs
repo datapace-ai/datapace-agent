@@ -3,9 +3,11 @@
 //! Handles sending metrics payloads to the Datapace Cloud API with:
 //! - Retry logic with exponential backoff
 //! - Request compression (gzip)
+//! - HMAC payload signing
 //! - Error handling and rate limiting
 
 use crate::payload::Payload;
+use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use std::time::Duration;
 use thiserror::Error;
@@ -50,6 +52,9 @@ pub struct UploaderConfig {
 
     /// Enable gzip compression
     pub compress: bool,
+
+    /// Initial retry delay (doubles on each retry via exponential backoff)
+    pub initial_retry_delay: Duration,
 }
 
 impl UploaderConfig {
@@ -60,7 +65,30 @@ impl UploaderConfig {
             timeout: Duration::from_secs(30),
             max_retries: 3,
             compress: true,
+            initial_retry_delay: Duration::from_secs(1),
         }
+    }
+}
+
+/// Trait for uploading payloads to Datapace Cloud
+#[cfg_attr(test, mockall::automock)]
+#[async_trait]
+pub trait Upload: Send + Sync {
+    /// Upload a payload to Datapace Cloud
+    async fn upload(&self, payload: &Payload) -> Result<(), UploaderError>;
+
+    /// Test the connection to Datapace Cloud
+    async fn test_connection(&self) -> Result<(), UploaderError>;
+
+    /// Send a lightweight heartbeat to Datapace Cloud.
+    ///
+    /// The default implementation is a no-op that returns `Ok(())`.
+    async fn send_heartbeat(
+        &self,
+        _status: &str,
+        _agent_version: &str,
+    ) -> Result<(), UploaderError> {
+        Ok(())
     }
 }
 
@@ -76,69 +104,24 @@ impl Uploader {
         let client = Client::builder()
             .timeout(config.timeout)
             .gzip(config.compress)
-            .user_agent(format!(
-                "datapace-agent/{}",
-                env!("CARGO_PKG_VERSION")
-            ))
+            .user_agent(format!("datapace-agent/{}", env!("CARGO_PKG_VERSION")))
             .build()?;
 
         Ok(Self { client, config })
     }
 
-    /// Upload a payload to Datapace Cloud
-    pub async fn upload(&self, payload: &Payload) -> Result<(), UploaderError> {
-        let json = serde_json::to_vec(payload)?;
-
-        info!(
-            endpoint = %self.config.endpoint,
-            payload_size = json.len(),
-            "Uploading metrics to Datapace Cloud"
-        );
-
-        let mut last_error = None;
-        let mut retry_delay = Duration::from_secs(1);
-
-        for attempt in 0..=self.config.max_retries {
-            if attempt > 0 {
-                warn!(attempt, "Retrying upload after failure");
-                tokio::time::sleep(retry_delay).await;
-                retry_delay *= 2; // Exponential backoff
-            }
-
-            match self.send_request(&json).await {
-                Ok(()) => {
-                    info!("Metrics uploaded successfully");
-                    return Ok(());
-                }
-                Err(e) => {
-                    // Don't retry on auth errors
-                    if matches!(e, UploaderError::AuthError(_)) {
-                        return Err(e);
-                    }
-
-                    // Handle rate limiting
-                    if let UploaderError::RateLimited { retry_after } = &e {
-                        if let Some(duration) = retry_after {
-                            retry_delay = *duration;
-                        }
-                    }
-
-                    error!(error = %e, attempt, "Upload attempt failed");
-                    last_error = Some(e);
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or(UploaderError::MaxRetriesExceeded))
-    }
-
     async fn send_request(&self, body: &[u8]) -> Result<(), UploaderError> {
+        let timestamp = chrono::Utc::now().timestamp().to_string();
+        let signature = self.compute_signature(body, &timestamp);
+
         let response = self
             .client
             .post(&self.config.endpoint)
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("X-Agent-Version", env!("CARGO_PKG_VERSION"))
+            .header("X-Signature", &signature)
+            .header("X-Signature-Timestamp", &timestamp)
             .body(body.to_vec())
             .send()
             .await?;
@@ -176,14 +159,81 @@ impl Uploader {
         }
     }
 
+    fn compute_signature(&self, body: &[u8], timestamp: &str) -> String {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        type HmacSha256 = Hmac<Sha256>;
+
+        let mut mac = HmacSha256::new_from_slice(self.config.api_key.as_bytes())
+            .expect("HMAC can take key of any size");
+        mac.update(timestamp.as_bytes());
+        mac.update(b".");
+        mac.update(body);
+        hex::encode(mac.finalize().into_bytes())
+    }
+}
+
+#[async_trait]
+impl Upload for Uploader {
+    /// Upload a payload to Datapace Cloud
+    async fn upload(&self, payload: &Payload) -> Result<(), UploaderError> {
+        let json = serde_json::to_vec(payload)?;
+
+        info!(
+            endpoint = %self.config.endpoint,
+            payload_size = json.len(),
+            "Uploading metrics to Datapace Cloud"
+        );
+
+        let mut last_error = None;
+        let mut retry_delay = self.config.initial_retry_delay;
+
+        for attempt in 0..=self.config.max_retries {
+            if attempt > 0 {
+                warn!(attempt, "Retrying upload after failure");
+                tokio::time::sleep(retry_delay).await;
+                retry_delay *= 2; // Exponential backoff
+            }
+
+            match self.send_request(&json).await {
+                Ok(()) => {
+                    info!("Metrics uploaded successfully");
+                    return Ok(());
+                }
+                Err(e) => {
+                    // Don't retry on auth errors
+                    if matches!(e, UploaderError::AuthError(_)) {
+                        return Err(e);
+                    }
+
+                    // Handle rate limiting
+                    if let UploaderError::RateLimited {
+                        retry_after: Some(duration),
+                    } = &e
+                    {
+                        retry_delay = *duration;
+                    }
+
+                    error!(error = %e, attempt, "Upload attempt failed");
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or(UploaderError::MaxRetriesExceeded))
+    }
+
     /// Test the connection to Datapace Cloud
-    pub async fn test_connection(&self) -> Result<(), UploaderError> {
+    async fn test_connection(&self) -> Result<(), UploaderError> {
         debug!("Testing connection to Datapace Cloud");
 
         // Try a HEAD request or a lightweight health check
         let response = self
             .client
-            .get(format!("{}/health", self.config.endpoint.trim_end_matches("/ingest")))
+            .get(format!(
+                "{}/health",
+                self.config.endpoint.trim_end_matches("/ingest")
+            ))
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .send()
             .await?;
@@ -197,6 +247,41 @@ impl Uploader {
             Err(UploaderError::ServerError {
                 status: response.status().as_u16(),
                 message: "Health check failed".to_string(),
+            })
+        }
+    }
+
+    /// Send a lightweight heartbeat to Datapace Cloud.
+    async fn send_heartbeat(&self, status: &str, agent_version: &str) -> Result<(), UploaderError> {
+        // Derive the heartbeat URL from the ingest endpoint.
+        // e.g. "https://api.datapace.ai/v1/ingest" → "https://api.datapace.ai/v1/heartbeat"
+        let base = self.config.endpoint.trim_end_matches("/ingest");
+        let url = format!("{}/heartbeat", base);
+
+        let body = serde_json::json!({
+            "status": status,
+            "agent_version": agent_version,
+            "timestamp": chrono::Utc::now(),
+        });
+
+        debug!(url = %url, "Sending heartbeat");
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .json(&body)
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            debug!("Heartbeat sent successfully");
+            Ok(())
+        } else {
+            Err(UploaderError::ServerError {
+                status: resp.status().as_u16(),
+                message: format!("Heartbeat returned non-success status: {}", resp.status()),
             })
         }
     }
@@ -225,5 +310,72 @@ mod tests {
             message: "Internal error".to_string(),
         };
         assert!(err.to_string().contains("500"));
+    }
+
+    #[test]
+    fn test_compute_signature() {
+        let config = UploaderConfig::new(
+            "https://api.datapace.ai/v1/ingest".to_string(),
+            "test-api-key-123".to_string(),
+        );
+        let uploader = Uploader::new(config).expect("Failed to create uploader");
+
+        let body = b"hello world";
+        let timestamp = "1700000000";
+        let signature = uploader.compute_signature(body, timestamp);
+
+        // Recompute expected value using the same HMAC logic
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        type HmacSha256 = Hmac<Sha256>;
+
+        let mut mac =
+            HmacSha256::new_from_slice(b"test-api-key-123").expect("HMAC can take key of any size");
+        mac.update(b"1700000000");
+        mac.update(b".");
+        mac.update(b"hello world");
+        let expected = hex::encode(mac.finalize().into_bytes());
+
+        assert_eq!(signature, expected);
+    }
+
+    #[test]
+    fn test_compute_signature_deterministic() {
+        let config = UploaderConfig::new(
+            "https://api.datapace.ai/v1/ingest".to_string(),
+            "test-api-key-123".to_string(),
+        );
+        let uploader = Uploader::new(config).expect("Failed to create uploader");
+
+        let body = b"test payload";
+        let timestamp = "1700000000";
+
+        let sig1 = uploader.compute_signature(body, timestamp);
+        let sig2 = uploader.compute_signature(body, timestamp);
+
+        assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_compute_signature_different_keys() {
+        let config1 = UploaderConfig::new(
+            "https://api.datapace.ai/v1/ingest".to_string(),
+            "key-alpha".to_string(),
+        );
+        let uploader1 = Uploader::new(config1).expect("Failed to create uploader");
+
+        let config2 = UploaderConfig::new(
+            "https://api.datapace.ai/v1/ingest".to_string(),
+            "key-beta".to_string(),
+        );
+        let uploader2 = Uploader::new(config2).expect("Failed to create uploader");
+
+        let body = b"same payload";
+        let timestamp = "1700000000";
+
+        let sig1 = uploader1.compute_signature(body, timestamp);
+        let sig2 = uploader2.compute_signature(body, timestamp);
+
+        assert_ne!(sig1, sig2);
     }
 }

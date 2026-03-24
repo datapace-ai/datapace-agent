@@ -27,6 +27,7 @@
 //! docker stop datapace-test-pg
 //! ```
 
+use datapace_agent::collector::Collector;
 use std::env;
 
 /// Get the test database URL from environment or use default
@@ -57,7 +58,11 @@ async fn test_postgres_connection() {
     )
     .await;
 
-    assert!(collector.is_ok(), "Failed to connect: {:?}", collector.err());
+    assert!(
+        collector.is_ok(),
+        "Failed to connect: {:?}",
+        collector.err()
+    );
 
     let collector = collector.unwrap();
     let result = collector.test_connection().await;
@@ -131,16 +136,18 @@ async fn test_postgres_version_detection() {
 
     let version = collector.version();
     assert!(version.is_some(), "Version should be detected");
-    assert!(version.unwrap().contains("PostgreSQL"), "Version should contain PostgreSQL");
+    let version_str = version.unwrap();
+    assert!(
+        version_str.contains("PostgreSQL"),
+        "Version should contain PostgreSQL"
+    );
 
-    println!("Detected version: {}", version.unwrap());
+    println!("Detected version: {}", version_str);
 }
 
 #[tokio::test]
 async fn test_postgres_database_type() {
     let database_url = require_database!();
-
-    use datapace_agent::collector::Collector;
 
     let collector = datapace_agent::collector::postgres::PostgresCollector::new(
         &database_url,

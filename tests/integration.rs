@@ -5,4 +5,14 @@
 //! cargo test --test integration
 //! ```
 
-mod integration;
+#[path = "integration/e2e_test.rs"]
+mod e2e_test;
+
+#[path = "integration/postgres_container_test.rs"]
+mod postgres_container_test;
+
+#[path = "integration/postgres_test.rs"]
+mod postgres_test;
+
+#[path = "integration/uploader_test.rs"]
+mod uploader_test;
