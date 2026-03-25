@@ -170,8 +170,6 @@ async fn get_neon_metadata(_pool: &PgPool) -> Result<HashMap<String, String>, Co
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_url_detection_supabase() {
         let url = "postgres://user:pass@db.xyz.supabase.co:5432/postgres";

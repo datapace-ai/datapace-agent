@@ -117,8 +117,7 @@ impl Scheduler {
                 state.last_collection_error = Some(err.clone());
             } else if !result.collection_ok {
                 state.status = "degraded".to_string();
-                state.last_collection_error =
-                    Some("Database collection failed".to_string());
+                state.last_collection_error = Some("Database collection failed".to_string());
             } else {
                 state.status = "ok".to_string();
                 state.last_collection_error = None;
