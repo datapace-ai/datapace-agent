@@ -29,6 +29,7 @@ pub struct PostgresCollector {
     provider: Provider,
     detected_provider: String,
     version: Option<String>,
+    database_url: String,
 }
 
 impl PostgresCollector {
@@ -62,6 +63,7 @@ impl PostgresCollector {
             provider,
             detected_provider,
             version: Some(version),
+            database_url: database_url.to_string(),
         })
     }
 
@@ -238,6 +240,7 @@ impl Collector for PostgresCollector {
         };
 
         let payload = Payload::new(database_info)
+            .with_instance_id(&self.database_url)
             .with_query_stats(query_stats)
             .with_table_stats(table_stats)
             .with_index_stats(index_stats)
