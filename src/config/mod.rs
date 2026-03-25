@@ -248,9 +248,9 @@ impl DatabaseType {
             return Ok(DatabaseType::Memgraph);
         }
 
-        Err(ConfigError::UnsupportedDatabase(format!(
-            "Unable to detect database type from URL. Supported: PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, DB2, Redis, Elasticsearch, ClickHouse, Cosmos DB, Snowflake, BigQuery, Redshift, DynamoDB, InfluxDB, TimescaleDB, CockroachDB, YugabyteDB, TiDB, Pinecone, Milvus, Weaviate, Qdrant, Chroma, Neo4j, Neptune, ArangoDB, JanusGraph, TigerGraph, Dgraph, Memgraph"
-        )))
+        Err(ConfigError::UnsupportedDatabase(
+            "Unable to detect database type from URL. Supported: PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, DB2, Redis, Elasticsearch, ClickHouse, Cosmos DB, Snowflake, BigQuery, Redshift, DynamoDB, InfluxDB, TimescaleDB, CockroachDB, YugabyteDB, TiDB, Pinecone, Milvus, Weaviate, Qdrant, Chroma, Neo4j, Neptune, ArangoDB, JanusGraph, TigerGraph, Dgraph, Memgraph".to_string()
+        ))
     }
 
     /// Get all supported URL schemes for this database type
@@ -790,12 +790,12 @@ fn parse_duration_secs(s: &str) -> Option<u64> {
         return None;
     }
 
-    let (num_str, suffix) = if s.ends_with('s') {
-        (&s[..s.len() - 1], 1u64)
-    } else if s.ends_with('m') {
-        (&s[..s.len() - 1], 60u64)
-    } else if s.ends_with('h') {
-        (&s[..s.len() - 1], 3600u64)
+    let (num_str, suffix) = if let Some(stripped) = s.strip_suffix('s') {
+        (stripped, 1u64)
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        (stripped, 60u64)
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        (stripped, 3600u64)
     } else {
         (s, 1u64)
     };

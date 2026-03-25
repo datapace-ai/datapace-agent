@@ -154,6 +154,7 @@ pub struct TableInfoRow {
 }
 
 /// Column information for schema metadata
+#[allow(dead_code)]
 pub const COLUMN_INFO: &str = r#"
 SELECT
     table_schema,
@@ -171,6 +172,7 @@ ORDER BY table_schema, table_name, ordinal_position
 "#;
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 pub struct ColumnInfoRow {
     pub table_schema: String,
     pub table_name: String,
@@ -211,6 +213,7 @@ pub struct IndexInfoRow {
     pub schemaname: String,
     pub tablename: String,
     pub indexname: String,
+    #[allow(dead_code)]
     pub indexdef: Option<String>,
     pub index_size: Option<i64>,
     pub is_unique: Option<bool>,
@@ -219,6 +222,7 @@ pub struct IndexInfoRow {
 }
 
 /// Foreign key information
+#[allow(dead_code)]
 pub const FOREIGN_KEY_INFO: &str = r#"
 SELECT
     tc.table_schema,
@@ -240,6 +244,7 @@ WHERE tc.constraint_type = 'FOREIGN KEY'
 "#;
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 pub struct ForeignKeyRow {
     pub table_schema: String,
     pub table_name: String,
