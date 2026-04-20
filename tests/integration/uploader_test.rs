@@ -27,6 +27,7 @@ fn test_uploader(base_uri: &str) -> Uploader {
     let config = UploaderConfig {
         endpoint: format!("{}/v1/ingest", base_uri),
         api_key: "test-api-key-secret".to_string(),
+        signing_secret: "test-api-key-secret".to_string(),
         timeout: Duration::from_secs(5),
         max_retries: 3,
         compress: false, // disable compression so wiremock receives plain JSON
@@ -93,6 +94,7 @@ async fn test_upload_signature_valid() {
     let config = UploaderConfig {
         endpoint: format!("{}/v1/ingest", mock_server.uri()),
         api_key: api_key.to_string(),
+        signing_secret: api_key.to_string(),
         timeout: Duration::from_secs(5),
         max_retries: 3,
         compress: false,
@@ -173,6 +175,7 @@ async fn test_upload_retry_on_500() {
     let config = UploaderConfig {
         endpoint: format!("{}/v1/ingest", mock_server.uri()),
         api_key: "test-api-key-secret".to_string(),
+        signing_secret: "test-api-key-secret".to_string(),
         timeout: Duration::from_secs(5),
         max_retries: 3,
         compress: false,
@@ -277,6 +280,7 @@ async fn test_upload_rate_limit_429() {
     let config = UploaderConfig {
         endpoint: format!("{}/v1/ingest", mock_server.uri()),
         api_key: "test-api-key-secret".to_string(),
+        signing_secret: "test-api-key-secret".to_string(),
         timeout: Duration::from_secs(5),
         max_retries: 3,
         compress: false,
@@ -297,5 +301,115 @@ async fn test_upload_rate_limit_429() {
         requests.len(),
         2,
         "Expected 2 requests (1 rate-limited + 1 success)"
+    );
+}
+
+#[tokio::test]
+async fn test_heartbeat_includes_signature_headers() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/heartbeat"))
+        .and(header_exists("X-Signature"))
+        .and(header_exists("X-Signature-Timestamp"))
+        .and(header_exists("Authorization"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let uploader = test_uploader(&mock_server.uri());
+
+    let result = uploader.send_heartbeat("ok", "0.1.0").await;
+    assert!(
+        result.is_ok(),
+        "Heartbeat should succeed with signature headers: {:?}",
+        result.err()
+    );
+}
+
+#[tokio::test]
+async fn test_heartbeat_signature_valid() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/heartbeat"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let api_key = "api-key-abc";
+    let signing_secret = "distinct-signing-secret";
+
+    // Use a distinct signing secret to prove the signature is derived from
+    // signing_secret, not from api_key.
+    let config = UploaderConfig {
+        endpoint: format!("{}/v1/ingest", mock_server.uri()),
+        api_key: api_key.to_string(),
+        signing_secret: signing_secret.to_string(),
+        timeout: Duration::from_secs(5),
+        max_retries: 3,
+        compress: false,
+        initial_retry_delay: Duration::from_millis(10),
+    };
+    let uploader = Uploader::new(config).expect("Failed to create uploader");
+
+    let result = uploader.send_heartbeat("ok", "0.1.0").await;
+    assert!(
+        result.is_ok(),
+        "Heartbeat should succeed: {:?}",
+        result.err()
+    );
+
+    let requests = mock_server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+
+    let request = &requests[0];
+
+    let signature_header = request
+        .headers
+        .get("X-Signature")
+        .expect("X-Signature header missing")
+        .to_str()
+        .expect("Invalid header value");
+
+    let timestamp_header = request
+        .headers
+        .get("X-Signature-Timestamp")
+        .expect("X-Signature-Timestamp header missing")
+        .to_str()
+        .expect("Invalid header value");
+
+    let body = &request.body;
+
+    // Independently recompute the expected HMAC-SHA256 signature using the
+    // signing_secret (NOT api_key).
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+
+    let mut mac = HmacSha256::new_from_slice(signing_secret.as_bytes())
+        .expect("HMAC can take key of any size");
+    mac.update(timestamp_header.as_bytes());
+    mac.update(b".");
+    mac.update(body);
+    let expected_signature = hex::encode(mac.finalize().into_bytes());
+
+    assert_eq!(
+        signature_header, expected_signature,
+        "Heartbeat HMAC signature mismatch — must be computed from signing_secret"
+    );
+
+    // Counter-check: signature must NOT equal the one computed from api_key.
+    let mut mac_bad =
+        HmacSha256::new_from_slice(api_key.as_bytes()).expect("HMAC can take key of any size");
+    mac_bad.update(timestamp_header.as_bytes());
+    mac_bad.update(b".");
+    mac_bad.update(body);
+    let api_key_signature = hex::encode(mac_bad.finalize().into_bytes());
+    assert_ne!(
+        signature_header, api_key_signature,
+        "Heartbeat signature must NOT be derived from api_key"
     );
 }

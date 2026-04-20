@@ -86,6 +86,7 @@ async fn main() -> Result<()> {
     let uploader_config = UploaderConfig::new(
         config.datapace.endpoint.clone(),
         config.datapace.api_key.clone(),
+        config.datapace.signing_secret.clone(),
     );
     let uploader = Uploader::new(uploader_config).context("Failed to create uploader")?;
 
@@ -104,11 +105,18 @@ async fn main() -> Result<()> {
         return scheduler.run_once().await.map_err(Into::into);
     }
 
-    // Create shared health state
+    // Create shared health state. Seed `database_connected` from an initial
+    // probe — don't assume healthy. Startup is not aborted on probe failure:
+    // the scheduler's first collection cycle will converge on the real state.
     let health_state: SharedHealthState = Arc::new(RwLock::new(HealthState::new()));
+    let initial_connected = collector.test_connection().await.is_ok();
     {
         let mut hs = health_state.write().await;
-        hs.database_connected = true;
+        hs.database_connected = initial_connected;
+        if !initial_connected {
+            hs.status = "degraded".to_string();
+            hs.last_collection_error = Some("Initial connection probe failed".to_string());
+        }
     }
 
     // Setup shutdown signal handling
@@ -207,6 +215,7 @@ async fn test_connections(config: &Config, collector: &dyn collector::Collector)
     let uploader_config = UploaderConfig::new(
         config.datapace.endpoint.clone(),
         config.datapace.api_key.clone(),
+        config.datapace.signing_secret.clone(),
     );
     let uploader = Uploader::new(uploader_config)?;
 

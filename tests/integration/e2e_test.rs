@@ -60,6 +60,7 @@ async fn test_full_collection_cycle() {
     let config = UploaderConfig {
         endpoint: format!("{}/v1/ingest", mock_server.uri()),
         api_key: "e2e-test-api-key".to_string(),
+        signing_secret: "e2e-test-api-key".to_string(),
         timeout: Duration::from_secs(10),
         max_retries: 1,
         compress: false,

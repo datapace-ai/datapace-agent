@@ -48,8 +48,10 @@ impl Default for HealthState {
 
 /// Start the health HTTP server.
 ///
-/// Binds to `0.0.0.0:{config.port}` and serves the health endpoint at `config.path`.
-/// Shuts down gracefully when `shutdown_rx` receives `true`.
+/// Binds to `{config.bind_address}:{config.port}` and serves the health
+/// endpoint at `config.path`. Shuts down gracefully when `shutdown_rx`
+/// receives `true`. Returns an error if `bind_address` cannot be parsed as
+/// a valid IP address.
 pub async fn start_health_server(
     config: &HealthConfig,
     state: SharedHealthState,
@@ -59,10 +61,21 @@ pub async fn start_health_server(
         .route(&config.path, get(health_handler))
         .with_state(state);
 
-    let addr: std::net::SocketAddr = ([0, 0, 0, 0], config.port).into();
+    let ip: std::net::IpAddr = config.bind_address.parse().map_err(|e| {
+        format!(
+            "Invalid health bind_address {:?}: {}",
+            config.bind_address, e
+        )
+    })?;
+    let addr = std::net::SocketAddr::new(ip, config.port);
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    info!(port = config.port, path = %config.path, "Health server listening");
+    info!(
+        bind_address = %config.bind_address,
+        port = config.port,
+        path = %config.path,
+        "Health server listening"
+    );
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -106,6 +119,32 @@ mod tests {
         assert!(json["last_collection_duration_ms"].is_null());
         assert!(json["last_collection_error"].is_null());
         assert_eq!(json["database_connected"], false);
+    }
+
+    #[test]
+    fn test_health_config_default_bind_address_is_loopback() {
+        let config = HealthConfig::default();
+        assert_eq!(
+            config.bind_address, "127.0.0.1",
+            "default bind address must be loopback, not 0.0.0.0"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_start_health_server_rejects_invalid_bind_address() {
+        let state: SharedHealthState = Arc::new(RwLock::new(HealthState::new()));
+        let (_tx, rx) = watch::channel(false);
+        let config = HealthConfig {
+            enabled: true,
+            bind_address: "not-an-ip".to_string(),
+            port: 0,
+            path: "/health".to_string(),
+        };
+        let result = start_health_server(&config, state, rx).await;
+        assert!(
+            result.is_err(),
+            "expected Err for invalid bind address, got Ok"
+        );
     }
 
     #[tokio::test]

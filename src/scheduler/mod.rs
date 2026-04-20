@@ -84,14 +84,14 @@ impl Scheduler {
         // Collect immediately on start
         let result = self.collect_and_upload().await;
         self.update_health(&result).await;
-        self.fire_heartbeat(&result).await;
+        self.fire_heartbeat(&result);
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     let result = self.collect_and_upload().await;
                     self.update_health(&result).await;
-                    self.fire_heartbeat(&result).await;
+                    self.fire_heartbeat(&result);
                 }
                 _ = self.shutdown_rx.changed() => {
                     if *self.shutdown_rx.borrow() {
@@ -125,20 +125,26 @@ impl Scheduler {
         }
     }
 
-    /// Fire a heartbeat to the cloud endpoint (non-blocking, log errors only).
-    async fn fire_heartbeat(&self, result: &CycleResult) {
+    /// Fire a heartbeat to the cloud endpoint.
+    ///
+    /// Spawns a detached task so a slow or hung heartbeat endpoint cannot
+    /// delay the next collection cycle. Errors are logged but not surfaced.
+    fn fire_heartbeat(&self, result: &CycleResult) {
         let status = if result.upload_error.is_some() || !result.collection_ok {
             "degraded"
         } else {
             "ok"
         };
-        if let Err(e) = self
-            .uploader
-            .send_heartbeat(status, env!("CARGO_PKG_VERSION"))
-            .await
-        {
-            warn!(error = %e, "Heartbeat failed");
-        }
+        let uploader = Arc::clone(&self.uploader);
+        let status = status.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = uploader
+                .send_heartbeat(&status, env!("CARGO_PKG_VERSION"))
+                .await
+            {
+                warn!(error = %e, "Heartbeat failed");
+            }
+        });
     }
 
     /// Perform a single collection and upload cycle, returning status info.
@@ -437,6 +443,112 @@ mod tests {
             result.is_ok(),
             "Scheduler should exit Ok on shutdown even after upload failure: {:?}",
             result.err()
+        );
+    }
+
+    /// Upload double whose `send_heartbeat` blocks asynchronously for a long
+    /// time. Used to verify that the scheduler does not await heartbeats inline.
+    struct SlowHeartbeatUpload {
+        heartbeat_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::uploader::Upload for SlowHeartbeatUpload {
+        async fn upload(
+            &self,
+            _payload: &crate::payload::Payload,
+        ) -> Result<(), crate::uploader::UploaderError> {
+            Ok(())
+        }
+
+        async fn test_connection(&self) -> Result<(), crate::uploader::UploaderError> {
+            Ok(())
+        }
+
+        async fn send_heartbeat(
+            &self,
+            _status: &str,
+            _agent_version: &str,
+        ) -> Result<(), crate::uploader::UploaderError> {
+            self.heartbeat_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // True async sleep — yields to the runtime instead of blocking a
+            // worker. If fire_heartbeat awaits this inline, the scheduler
+            // stalls; if it spawns this detached, the scheduler proceeds.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fire_heartbeat_does_not_block() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Instant;
+
+        let payload = mock_payload();
+
+        let mut mock_collector = MockCollector::new();
+        mock_collector
+            .expect_collect()
+            .returning(move || Ok(payload.clone()));
+        mock_collector
+            .expect_provider()
+            .return_const("generic".to_string());
+        mock_collector
+            .expect_version()
+            .returning(|| Some("PostgreSQL 16.1".to_string()));
+        mock_collector
+            .expect_database_type()
+            .returning(|| DatabaseType::Postgres);
+        mock_collector.expect_test_connection().returning(|| Ok(()));
+
+        let heartbeat_calls = Arc::new(AtomicUsize::new(0));
+        let slow_uploader = Arc::new(SlowHeartbeatUpload {
+            heartbeat_calls: Arc::clone(&heartbeat_calls),
+        });
+
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let mut scheduler = Scheduler::new(
+            Arc::new(mock_collector),
+            slow_uploader,
+            Duration::from_secs(3600),
+            shutdown_rx,
+            None,
+        );
+
+        let start = Instant::now();
+        let handle = tokio::spawn(async move { scheduler.run().await });
+
+        // Give the scheduler a moment to complete its first cycle and spawn
+        // the slow heartbeat. With non-blocking fire_heartbeat, the cycle
+        // completes in milliseconds and the scheduler enters its select loop.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        shutdown_tx.send(true).expect("Failed to send shutdown");
+
+        // If fire_heartbeat awaited the heartbeat inline, the scheduler
+        // would still be sleeping for 30s and this 3s timeout would fire.
+        let result = tokio::time::timeout(Duration::from_secs(3), handle)
+            .await
+            .expect("Scheduler blocked on heartbeat — fire_heartbeat must be non-blocking")
+            .expect("Scheduler task panicked");
+        let elapsed = start.elapsed();
+
+        assert!(
+            result.is_ok(),
+            "Scheduler should exit Ok on shutdown: {:?}",
+            result.err()
+        );
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "Scheduler took too long ({:?}) — fire_heartbeat is blocking",
+            elapsed
+        );
+        // Sanity: heartbeat was actually invoked at least once.
+        assert!(
+            heartbeat_calls.load(Ordering::SeqCst) >= 1,
+            "send_heartbeat should have been called at least once"
         );
     }
 
