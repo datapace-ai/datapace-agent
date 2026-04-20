@@ -153,7 +153,13 @@ pub struct TableInfoRow {
     pub total_bytes: Option<i64>,
 }
 
-/// Column information for schema metadata
+/// Column information for schema metadata.
+///
+/// TODO(schema-introspection): scaffolded for column-level metadata
+/// collection but not wired into `PostgresCollector::collect`. Either
+/// connect this to the payload (and drop the `dead_code` allow) or remove
+/// it. Tracking issue: <https://github.com/datapace-ai/datapace-agent/issues>
+#[allow(dead_code)]
 pub const COLUMN_INFO: &str = r#"
 SELECT
     table_schema,
@@ -170,7 +176,10 @@ WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
 ORDER BY table_schema, table_name, ordinal_position
 "#;
 
+// TODO(schema-introspection): paired with `COLUMN_INFO` above. Remove or
+// wire into the collector payload.
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 pub struct ColumnInfoRow {
     pub table_schema: String,
     pub table_name: String,
@@ -211,6 +220,11 @@ pub struct IndexInfoRow {
     pub schemaname: String,
     pub tablename: String,
     pub indexname: String,
+    // TODO(schema-introspection): the index DDL is selected by `INDEX_INFO`
+    // but never read out of the row. Either surface it in `IndexMetadata`
+    // (in `src/payload/mod.rs`) or drop it from the SELECT and remove this
+    // field.
+    #[allow(dead_code)]
     pub indexdef: Option<String>,
     pub index_size: Option<i64>,
     pub is_unique: Option<bool>,
@@ -218,7 +232,12 @@ pub struct IndexInfoRow {
     pub columns: Option<String>,
 }
 
-/// Foreign key information
+/// Foreign key information.
+///
+/// TODO(schema-introspection): scaffolded for FK-graph collection but not
+/// wired into `PostgresCollector::collect`. Either connect this to the
+/// payload (and drop the `dead_code` allow) or remove it.
+#[allow(dead_code)]
 pub const FOREIGN_KEY_INFO: &str = r#"
 SELECT
     tc.table_schema,
@@ -239,7 +258,10 @@ WHERE tc.constraint_type = 'FOREIGN KEY'
     AND tc.table_schema NOT IN ('pg_catalog', 'information_schema')
 "#;
 
+// TODO(schema-introspection): paired with `FOREIGN_KEY_INFO` above. Remove
+// or wire into the collector payload.
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 pub struct ForeignKeyRow {
     pub table_schema: String,
     pub table_name: String,

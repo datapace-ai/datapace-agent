@@ -73,11 +73,11 @@ pub enum DatabaseType {
     Weaviate,
     Qdrant,
     Chroma,
-    Pgvector,  // PostgreSQL extension
+    Pgvector, // PostgreSQL extension
 
     // Graph databases
     Neo4j,
-    Neptune,      // AWS Neptune
+    Neptune, // AWS Neptune
     Arangodb,
     Janusgraph,
     Tigergraph,
@@ -101,6 +101,11 @@ impl DatabaseType {
             }
             if url_lower.contains("yugabyte") {
                 return Ok(DatabaseType::Yugabytedb);
+            }
+            if url_lower.contains("redshift.amazonaws.com")
+                || url_lower.contains("redshift-serverless.amazonaws.com")
+            {
+                return Ok(DatabaseType::Redshift);
             }
             return Ok(DatabaseType::Postgres);
         }
@@ -243,9 +248,9 @@ impl DatabaseType {
             return Ok(DatabaseType::Memgraph);
         }
 
-        Err(ConfigError::UnsupportedDatabase(format!(
-            "Unable to detect database type from URL. Supported: PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, DB2, Redis, Elasticsearch, ClickHouse, Cosmos DB, Snowflake, BigQuery, Redshift, DynamoDB, InfluxDB, TimescaleDB, CockroachDB, YugabyteDB, TiDB, Pinecone, Milvus, Weaviate, Qdrant, Chroma, Neo4j, Neptune, ArangoDB, JanusGraph, TigerGraph, Dgraph, Memgraph"
-        )))
+        Err(ConfigError::UnsupportedDatabase(
+            "Unable to detect database type from URL. Supported: PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, DB2, Redis, Elasticsearch, ClickHouse, Cosmos DB, Snowflake, BigQuery, Redshift, DynamoDB, InfluxDB, TimescaleDB, CockroachDB, YugabyteDB, TiDB, Pinecone, Milvus, Weaviate, Qdrant, Chroma, Neo4j, Neptune, ArangoDB, JanusGraph, TigerGraph, Dgraph, Memgraph".to_string()
+        ))
     }
 
     /// Get all supported URL schemes for this database type
@@ -264,7 +269,7 @@ impl DatabaseType {
             DatabaseType::Couchbase => &["couchbase://", "couchbases://"],
             DatabaseType::Snowflake => &["https://"],
             DatabaseType::Bigquery => &["bigquery://"],
-            DatabaseType::Redshift => &["postgres://"],  // Redshift uses PostgreSQL protocol
+            DatabaseType::Redshift => &["postgres://"], // Redshift uses PostgreSQL protocol
             DatabaseType::Dynamodb => &["https://"],
             DatabaseType::Influxdb => &["influxdb://", "https://"],
             DatabaseType::Timescaledb => &["postgres://", "postgresql://"],
@@ -390,6 +395,15 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatapaceConfig {
     pub api_key: String,
+
+    /// Secret used to sign payloads via HMAC-SHA256.
+    ///
+    /// If unset, falls back to `api_key` for backward compatibility — but this
+    /// defeats tamper detection because the API key is also sent on every
+    /// request in the `Authorization` header. Operators should provision a
+    /// distinct `DATAPACE_SIGNING_SECRET`.
+    #[serde(default)]
+    pub signing_secret: Option<String>,
 
     #[serde(default = "default_endpoint")]
     pub endpoint: String,
@@ -587,6 +601,16 @@ pub struct HealthConfig {
     #[serde(default = "default_health_enabled")]
     pub enabled: bool,
 
+    /// IP address to bind the health server to.
+    ///
+    /// Defaults to `127.0.0.1` (loopback only). The health response exposes
+    /// `last_collection_error`, which can contain DB error detail — so the
+    /// endpoint is restricted to localhost by default. Set to `0.0.0.0`
+    /// explicitly if you need it reachable from outside the local host
+    /// (e.g. a kubelet probe that connects from the node IP).
+    #[serde(default = "default_health_bind_address")]
+    pub bind_address: String,
+
     #[serde(default = "default_health_port")]
     pub port: u16,
 
@@ -598,6 +622,7 @@ impl Default for HealthConfig {
     fn default() -> Self {
         Self {
             enabled: default_health_enabled(),
+            bind_address: default_health_bind_address(),
             port: default_health_port(),
             path: default_health_path(),
         }
@@ -649,6 +674,10 @@ fn default_health_enabled() -> bool {
     true
 }
 
+fn default_health_bind_address() -> String {
+    "127.0.0.1".to_string()
+}
+
 fn default_health_port() -> u16 {
     8080
 }
@@ -675,7 +704,17 @@ impl Config {
         let database_url = std::env::var("DATABASE_URL")
             .map_err(|_| ConfigError::MissingField("DATABASE_URL".to_string()))?;
 
-        let endpoint = std::env::var("DATAPACE_ENDPOINT").unwrap_or_else(|_| default_endpoint());
+        // Treat empty env vars as unset for optional fields. This matches
+        // common shell conventions (`${VAR:-}` in docker-compose etc.) and
+        // avoids tripping the empty-string validator on `signing_secret`.
+        let signing_secret = std::env::var("DATAPACE_SIGNING_SECRET")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+
+        let endpoint = std::env::var("DATAPACE_ENDPOINT")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(default_endpoint);
 
         let interval_secs = std::env::var("COLLECTION_INTERVAL")
             .ok()
@@ -703,15 +742,29 @@ impl Config {
             })
             .unwrap_or_else(default_log_format);
 
+        let mut health = HealthConfig::default();
+        if let Ok(ba) = std::env::var("DATAPACE_HEALTH_BIND_ADDRESS") {
+            if !ba.trim().is_empty() {
+                health.bind_address = ba;
+            }
+        }
+        if let Ok(p) = std::env::var("DATAPACE_HEALTH_PORT") {
+            if let Ok(p) = p.parse::<u16>() {
+                health.port = p;
+            }
+        }
+
         let config = Config {
             datapace: DatapaceConfig {
                 api_key,
+                signing_secret,
                 endpoint,
                 timeout: default_timeout(),
                 retries: default_retries(),
             },
             database: DatabaseConfig {
                 url: database_url,
+                db_type: DatabaseType::default(),
                 provider: Provider::Auto,
                 pool: PoolConfig::default(),
             },
@@ -723,7 +776,7 @@ impl Config {
                 level: log_level,
                 format: log_format,
             },
-            health: HealthConfig::default(),
+            health,
         };
 
         config.validate()?;
@@ -732,10 +785,18 @@ impl Config {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.datapace.api_key.is_empty() {
+        if self.datapace.api_key.trim().is_empty() {
             return Err(ConfigError::ValidationError(
                 "API key cannot be empty".to_string(),
             ));
+        }
+
+        if let Some(ref s) = self.datapace.signing_secret {
+            if s.trim().is_empty() {
+                return Err(ConfigError::ValidationError(
+                    "Signing secret cannot be empty when set".to_string(),
+                ));
+            }
         }
 
         if self.database.url.is_empty() {
@@ -784,12 +845,12 @@ fn parse_duration_secs(s: &str) -> Option<u64> {
         return None;
     }
 
-    let (num_str, suffix) = if s.ends_with('s') {
-        (&s[..s.len() - 1], 1u64)
-    } else if s.ends_with('m') {
-        (&s[..s.len() - 1], 60u64)
-    } else if s.ends_with('h') {
-        (&s[..s.len() - 1], 3600u64)
+    let (num_str, suffix) = if let Some(stripped) = s.strip_suffix('s') {
+        (stripped, 1u64)
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        (stripped, 60u64)
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        (stripped, 3600u64)
     } else {
         (s, 1u64)
     };
@@ -956,5 +1017,94 @@ mod tests {
         let yaml = "query_stats";
         let metric: MetricType = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(metric, MetricType::QueryStats);
+    }
+
+    /// Build a minimal Config that passes validation. Tests can mutate a
+    /// single field to exercise validation error paths.
+    fn valid_config() -> Config {
+        Config {
+            datapace: DatapaceConfig {
+                api_key: "valid-key".to_string(),
+                signing_secret: None,
+                endpoint: default_endpoint(),
+                timeout: default_timeout(),
+                retries: default_retries(),
+            },
+            database: DatabaseConfig {
+                url: "postgres://user:pass@localhost:5432/db".to_string(),
+                db_type: DatabaseType::Postgres,
+                provider: Provider::Generic,
+                pool: PoolConfig::default(),
+            },
+            collection: CollectionConfig::default(),
+            logging: LoggingConfig::default(),
+            health: HealthConfig::default(),
+        }
+    }
+
+    #[test]
+    fn test_validate_accepts_valid_config() {
+        let config = valid_config();
+        assert!(
+            config.validate().is_ok(),
+            "baseline valid_config() should pass validation"
+        );
+    }
+
+    #[test]
+    fn test_validate_rejects_empty_api_key() {
+        let mut config = valid_config();
+        config.datapace.api_key = "".to_string();
+        let err = config
+            .validate()
+            .expect_err("empty api_key must be rejected");
+        match err {
+            ConfigError::ValidationError(msg) => {
+                assert!(
+                    msg.to_lowercase().contains("api key"),
+                    "error message should mention API key, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected ValidationError, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_rejects_whitespace_only_api_key() {
+        let mut config = valid_config();
+        config.datapace.api_key = "   ".to_string();
+        let err = config
+            .validate()
+            .expect_err("whitespace-only api_key must be rejected");
+        assert!(matches!(err, ConfigError::ValidationError(_)));
+    }
+
+    #[test]
+    fn test_validate_rejects_empty_signing_secret() {
+        let mut config = valid_config();
+        config.datapace.signing_secret = Some("".to_string());
+        let err = config
+            .validate()
+            .expect_err("empty signing_secret must be rejected when set");
+        match err {
+            ConfigError::ValidationError(msg) => {
+                assert!(
+                    msg.to_lowercase().contains("signing secret"),
+                    "error message should mention signing secret, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected ValidationError, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_accepts_none_signing_secret() {
+        // signing_secret = None is valid; it falls back to api_key at the
+        // uploader layer. Only an explicit empty string is rejected.
+        let mut config = valid_config();
+        config.datapace.signing_secret = None;
+        assert!(config.validate().is_ok());
     }
 }

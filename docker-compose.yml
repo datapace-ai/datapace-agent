@@ -9,23 +9,56 @@
 
 services:
   datapace-agent:
-    image: ghcr.io/datapace-ai/datapace-agent:latest
+    # image: ghcr.io/datapace-ai/datapace-agent:latest
     # Or build locally:
-    # build: .
+    build: .
     container_name: datapace-agent
+    # In dev mode (--profile dev), wait for the local postgres to become
+    # healthy before starting. When the dev profile is NOT active, this
+    # dependency is silently ignored, so production deployments pointing
+    # at an external DB still work.
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      DATAPACE_API_KEY: ${DATAPACE_API_KEY}
-      DATABASE_URL: ${DATABASE_URL}
+      # Required
+      DATAPACE_API_KEY: ${DATAPACE_API_KEY:-dev-test-key}
+      # In dev, default to the in-network postgres service. Override via
+      # the host env or .env file for production.
+      DATABASE_URL: ${DATABASE_URL:-postgres://datapace:datapace@postgres:5432/datapace_dev}
+      # Optional but recommended in production: distinct HMAC signing secret.
+      DATAPACE_SIGNING_SECRET: ${DATAPACE_SIGNING_SECRET:-}
+      # Optional: override the cloud endpoint (defaults to api.datapace.ai).
+      DATAPACE_ENDPOINT: ${DATAPACE_ENDPOINT:-}
       COLLECTION_INTERVAL: ${COLLECTION_INTERVAL:-60s}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-json}
+      # Bind health server on all interfaces inside the container so the
+      # published port is reachable from the host. The container itself is
+      # the network boundary; loopback-only would defeat the port mapping.
+      DATAPACE_HEALTH_BIND_ADDRESS: ${DATAPACE_HEALTH_BIND_ADDRESS:-0.0.0.0}
+      DATAPACE_HEALTH_PORT: ${DATAPACE_HEALTH_PORT:-8080}
+    ports:
+      - "${DATAPACE_HEALTH_HOST_PORT:-8080}:8080"
     restart: unless-stopped
     # Optional: mount config file
     # volumes:
     #   - ./agent.yaml:/app/agent.yaml:ro
     # command: ["--config", "/app/agent.yaml"]
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      # Use 127.0.0.1 explicitly: alpine's wget resolves `localhost` to
+      # ::1 first, but the agent binds IPv4 (0.0.0.0) only, so an IPv6
+      # probe would fail with "connection refused" despite a healthy
+      # server.
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8080/health",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -42,10 +75,11 @@ services:
       POSTGRES_PASSWORD: datapace
       POSTGRES_DB: datapace_dev
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-dev-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U datapace -d datapace_dev"]
       interval: 10s

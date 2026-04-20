@@ -13,7 +13,10 @@ use std::collections::HashMap;
 use tracing::debug;
 
 /// Detect the database provider from connection string and database metadata
-pub async fn detect_provider(pool: &PgPool, connection_url: &str) -> Result<String, CollectorError> {
+pub async fn detect_provider(
+    pool: &PgPool,
+    connection_url: &str,
+) -> Result<String, CollectorError> {
     debug!("Auto-detecting database provider");
 
     // Check connection string patterns first
@@ -48,11 +51,10 @@ pub async fn detect_provider(pool: &PgPool, connection_url: &str) -> Result<Stri
 /// Detect AWS RDS vs Aurora
 async fn detect_aws_provider(pool: &PgPool) -> Result<String, CollectorError> {
     // Check for Aurora-specific function
-    let has_aurora: (bool,) = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = 'aurora_version')",
-    )
-    .fetch_one(pool)
-    .await?;
+    let has_aurora: (bool,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = 'aurora_version')")
+            .fetch_one(pool)
+            .await?;
 
     if has_aurora.0 {
         return Ok("aurora".to_string());
@@ -63,10 +65,9 @@ async fn detect_aws_provider(pool: &PgPool) -> Result<String, CollectorError> {
 
 /// Detect provider from installed extensions
 async fn detect_from_extensions(pool: &PgPool) -> Result<String, CollectorError> {
-    let extensions: Vec<(String,)> =
-        sqlx::query_as("SELECT extname FROM pg_extension")
-            .fetch_all(pool)
-            .await?;
+    let extensions: Vec<(String,)> = sqlx::query_as("SELECT extname FROM pg_extension")
+        .fetch_all(pool)
+        .await?;
 
     let ext_names: Vec<&str> = extensions.iter().map(|e| e.0.as_str()).collect();
 
@@ -88,11 +89,10 @@ async fn detect_from_extensions(pool: &PgPool) -> Result<String, CollectorError>
 /// Detect provider from database settings
 async fn detect_from_settings(pool: &PgPool) -> Result<String, CollectorError> {
     // Check for provider-specific GUC parameters
-    let result: Result<(String,), _> = sqlx::query_as(
-        "SELECT setting FROM pg_settings WHERE name = 'rds.extensions'",
-    )
-    .fetch_one(pool)
-    .await;
+    let result: Result<(String,), _> =
+        sqlx::query_as("SELECT setting FROM pg_settings WHERE name = 'rds.extensions'")
+            .fetch_one(pool)
+            .await;
 
     if result.is_ok() {
         return Ok("rds".to_string());
@@ -136,10 +136,9 @@ async fn get_rds_metadata(pool: &PgPool) -> Result<HashMap<String, String>, Coll
     let mut metadata = HashMap::new();
 
     // Try to get Aurora version if available
-    let aurora_version: Result<(String,), _> =
-        sqlx::query_as("SELECT aurora_version()")
-            .fetch_one(pool)
-            .await;
+    let aurora_version: Result<(String,), _> = sqlx::query_as("SELECT aurora_version()")
+        .fetch_one(pool)
+        .await;
 
     if let Ok((version,)) = aurora_version {
         metadata.insert("aurora_version".to_string(), version);
@@ -171,8 +170,6 @@ async fn get_neon_metadata(_pool: &PgPool) -> Result<HashMap<String, String>, Co
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_url_detection_supabase() {
         let url = "postgres://user:pass@db.xyz.supabase.co:5432/postgres";
