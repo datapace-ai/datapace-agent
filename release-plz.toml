@@ -91,7 +91,6 @@ commit_parsers = [
 ]
 
 # Sort commits within each section so the output is stable.
-filter_commits = false
 sort_commits = "newest"
 
 # Treat `BREAKING CHANGE:` footer or `!` in type as breaking.
