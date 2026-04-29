@@ -1,0 +1,44 @@
+name: PR Title
+
+# Enforces Conventional Commits on PR titles so that, when a PR is squash-
+# merged with the title as the commit message, the resulting `main` history
+# is parseable by release-plz. The list of allowed types matches the parsers
+# in `release-plz.toml`.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    name: Lint PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Conventional Commits format
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            revert
+            docs
+            refactor
+            style
+            test
+            chore
+            ci
+            build
+          # Allow `!` in the type to mark breaking changes (e.g. `feat!: ...`)
+          # and require a non-empty subject after the colon.
+          requireScope: false
+          subjectPattern: ^[A-Za-z].+$
+          subjectPatternError: |
+            The subject "{subject}" must start with a letter and contain at
+            least one additional character. Example: `feat: add MongoDB
+            collector`.
