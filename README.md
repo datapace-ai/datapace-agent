@@ -130,7 +130,7 @@ GRANT EXECUTE ON FUNCTION pg_stat_statements_reset TO datapace_agent;
 
 | Database | Status | Cloud Providers |
 |----------|--------|-----------------|
-| **MongoDB** | Planned | Generic, MongoDB Atlas, AWS DocumentDB |
+| **MongoDB** | Stable | Generic, MongoDB Atlas, AWS DocumentDB |
 | **Couchbase** | Planned | Generic, Couchbase Cloud |
 | **Azure Cosmos DB** | Planned | Azure |
 
