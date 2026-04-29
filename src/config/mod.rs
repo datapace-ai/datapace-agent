@@ -294,7 +294,7 @@ impl DatabaseType {
 
     /// Check if this database type is currently supported
     pub fn is_implemented(&self) -> bool {
-        matches!(self, DatabaseType::Postgres)
+        matches!(self, DatabaseType::Postgres | DatabaseType::Mongodb)
     }
 
     /// Get the category of this database

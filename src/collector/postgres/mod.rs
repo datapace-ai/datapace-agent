@@ -185,6 +185,7 @@ impl PostgresCollector {
                 columns: vec![], // Columns collected separately
                 row_count_estimate: row.row_estimate,
                 size_bytes: row.total_bytes,
+                ..Default::default()
             })
             .collect();
 

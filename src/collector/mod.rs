@@ -13,9 +13,9 @@
 //!
 //! See `docs/EXTENDING.md` for a complete guide on adding support for new databases.
 
+pub mod mongodb;
 pub mod postgres;
 // pub mod mysql;    // Coming soon
-// pub mod mongodb;  // Coming soon
 
 use crate::config::DatabaseType;
 use crate::payload::Payload;
@@ -198,11 +198,11 @@ pub async fn create_collector(
                 .to_string(),
         )),
 
-        // Coming soon - Document
-        DatabaseType::Mongodb => Err(CollectorError::UnsupportedDatabase(
-            "MongoDB support is coming soon. See docs/EXTENDING.md for contribution guide."
-                .to_string(),
-        )),
+        // Document
+        DatabaseType::Mongodb => {
+            let collector = mongodb::MongoCollector::new(database_url, provider).await?;
+            Ok(Box::new(collector))
+        }
 
         DatabaseType::Couchbase => Err(CollectorError::UnsupportedDatabase(
             "Couchbase support is coming soon. See docs/EXTENDING.md for contribution guide."

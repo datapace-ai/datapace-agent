@@ -235,45 +235,115 @@ pub struct SchemaMetadata {
 }
 
 /// Table metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `schema` and `name` form a fully-qualified identifier. For MongoDB the
+/// mapping is `(schema = database_name, name = collection_name)`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TableMetadata {
-    /// Schema name
+    /// Schema name (or MongoDB database name)
     pub schema: String,
 
-    /// Table name
+    /// Table name (or MongoDB collection name)
     pub name: String,
 
-    /// Column definitions
+    /// Column definitions (or per-field profiles for MongoDB)
     pub columns: Vec<ColumnMetadata>,
 
-    /// Estimated row count
+    /// Estimated row count (Postgres) or document count (Mongo `collStats.count`)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub row_count_estimate: Option<i64>,
 
-    /// Table size in bytes
+    /// Total size in bytes
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<i64>,
+
+    // ---------- MongoDB-specific (None for relational sources) ----------
+    /// Number of documents actually sampled — denominator for ColumnMetadata.presence_rate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_count_sampled: Option<i64>,
+
+    /// Average document size in bytes (`collStats.avgObjSize`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_document_size_bytes: Option<i64>,
+
+    /// Compressed on-disk storage size (`collStats.storageSize`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_size_bytes: Option<i64>,
+
+    /// True if this is a capped collection (MongoDB)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_capped: Option<bool>,
+
+    /// True if this is a view rather than a base collection
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_view: Option<bool>,
+
+    /// True if this is a MongoDB time-series collection
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_timeseries: Option<bool>,
 }
 
-/// Column metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Column / field metadata.
+///
+/// Carries both relational column attributes and MongoDB-specific schema
+/// inference results. For Postgres, the MongoDB-only fields are `None`.
+/// For MongoDB, `name` is a dot/bracket path (e.g. `address.street`,
+/// `photos[]`, `photos[].url`) and `default` is `None`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ColumnMetadata {
-    /// Column name
+    /// Column name (or dot/bracket path for MongoDB nested fields)
     pub name: String,
 
-    /// Data type
+    /// Data type — single label if homogeneous, `"mixed"` for polymorphic Mongo fields
     pub data_type: String,
 
-    /// Whether the column is nullable
+    /// Whether the column is nullable. For MongoDB: true if any null observed
+    /// or presence_rate < 1.0.
     pub nullable: bool,
 
-    /// Default value expression
+    /// Default value expression (relational only; always None for MongoDB)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
 
-    /// Ordinal position
+    /// Ordinal position (stable first-seen order for MongoDB)
     pub position: i32,
+
+    // ---------- MongoDB-specific (None for relational sources) ----------
+    /// Fraction of sampled documents containing this path, in 0.0..=1.0
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_rate: Option<f64>,
+
+    /// Fraction of sampled documents where this path holds an explicit BSON null
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub null_rate: Option<f64>,
+
+    /// Distinct BSON type labels observed at this path
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bson_types: Option<Vec<String>>,
+
+    /// Distinct value count, exact up to the per-path cap
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distinct_count: Option<i64>,
+
+    /// True if the per-path distinct cap was exceeded ("many")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distinct_capped: Option<bool>,
+
+    /// Up to N reservoir-sampled values, BSON-coerced to JSON for transport
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_values: Option<Vec<serde_json::Value>>,
+
+    /// True if this path is under a `[]` array element segment
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_array_element: Option<bool>,
+
+    /// Maximum array length observed at any `[]` ancestor of this path
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub array_max_len: Option<i64>,
 }
 
 /// Index metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IndexMetadata {
     /// Schema name
     pub schema: String,
