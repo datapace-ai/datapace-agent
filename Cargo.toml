@@ -1,6 +1,6 @@
 [package]
 name = "datapace-agent"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Datapace <hello@datapace.ai>"]
 description = "A lightweight agent that collects database metrics and sends them to Datapace Cloud"

@@ -38,11 +38,15 @@ changelog_path = "./CHANGELOG.md"
 # the version on their own.
 release_commits = "^(feat|fix|perf|revert)"
 
-# Use the existing semver bump rules:
+# cargo-semver-checks is for libraries with public APIs. This crate is a
+# binary (`publish = false`); enabling semver_check appears to suppress
+# release-plz's automatic version bumps because cargo-semver-checks finds
+# no public API to evaluate. Conventional Commits parsing on its own is
+# enough to drive bumps:
 #   BREAKING CHANGE in body or `!` in type → major
 #   feat → minor
 #   fix / perf / revert → patch
-semver_check = true
+semver_check = false
 
 [changelog]
 header = """# Changelog
