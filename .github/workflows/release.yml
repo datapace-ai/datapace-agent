@@ -43,6 +43,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          save-if: ${{ matrix.os != 'windows-latest' }}
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
