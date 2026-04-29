@@ -12,6 +12,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-29
+
 ### Added
 - MongoDB collector with migration-grade schema profiling. Samples each
   collection (adaptive size, `$sample`-driven) and recursively flattens nested
@@ -31,6 +33,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow.
 - testcontainers-driven MongoDB integration tests covering connection,
   version detection, schema inference of nested + polymorphic fixtures, and
   unique-index emission.
+- Documentation update marking MongoDB support as Stable in README's
+  database support matrix.
+
+### Changed
+- `release-plz.toml`: removed `semver_check = true`. cargo-semver-checks is
+  designed for libraries with public APIs; running it on a `publish = false`
+  binary appears to suppress release-plz's automatic version-bump proposals,
+  so it's now disabled. Future `feat:`/`fix:` commits should auto-bump.
 
 ## [0.1.0] - 2026-04-29
 
@@ -68,5 +78,6 @@ Datapace Cloud.
   diagnostics to the network.
 - Read-only database access — no writes, no DDL, no data exfiltration.
 
-[Unreleased]: https://github.com/datapace-ai/datapace-agent/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/datapace-ai/datapace-agent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/datapace-ai/datapace-agent/releases/tag/v0.2.0
 [0.1.0]: https://github.com/datapace-ai/datapace-agent/releases/tag/v0.1.0
