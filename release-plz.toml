@@ -1,0 +1,98 @@
+# release-plz configuration.
+#
+# Behaviour:
+# - On every push to `main`, the release-plz GitHub Action inspects commits
+#   since the last tag and opens (or refreshes) a "release PR" that bumps
+#   `Cargo.toml`, regenerates the `[Unreleased]` block of CHANGELOG.md from
+#   Conventional Commits, and proposes a new versioned section.
+# - Merging that release PR creates a `vX.Y.Z` git tag, which fires the
+#   existing `.github/workflows/release.yml` (binaries + GHCR image + GitHub
+#   release).
+# - We do NOT publish to crates.io and we do NOT have release-plz create the
+#   GitHub release itself — both are intentional, see flags below.
+
+[workspace]
+# crates.io publish is disabled — this is not a library, it's a binary
+# distributed via GHCR + GitHub Releases.
+publish = false
+
+# Do create the git tag — release.yml is gated on `v*` tags.
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+
+# Do NOT have release-plz create a GitHub release. The existing release.yml
+# already creates one with binaries + checksums when the tag is pushed.
+# Letting release-plz also create a release would result in duplicates.
+git_release_enable = false
+
+# Update CHANGELOG.md as part of the release PR.
+changelog_update = true
+
+# Custom changelog template — Keep a Changelog flavoured, grouped by
+# Conventional Commit type.
+changelog_path = "./CHANGELOG.md"
+
+# Only `feat`, `fix`, and breaking-change commits trigger a version bump.
+# Pure chore/docs/ci/test/refactor commits are still recorded in the
+# changelog (see the per-section commit_parsers below) but do not move
+# the version on their own.
+release_commits = "^(feat|fix|perf|revert)"
+
+# Use the existing semver bump rules:
+#   BREAKING CHANGE in body or `!` in type → major
+#   feat → minor
+#   fix / perf / revert → patch
+semver_check = true
+
+[changelog]
+header = """# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+Maintenance is automated via [release-plz](https://release-plz.dev/) — entries
+under `[Unreleased]` are derived from [Conventional Commits](https://www.conventionalcommits.org/)
+on `main` and are promoted to a new versioned section when a release PR merges.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow.
+"""
+
+body = """
+## [{{ version | default(value="Unreleased") }}]\
+{% if version %} - {{ timestamp | date(format="%Y-%m-%d") }}{% endif %}
+
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}\
+- {{ commit.message | upper_first }}\
+{% if commit.breaking %} **BREAKING**{% endif %}\
+{% if commit.scope %} *(scope: {{ commit.scope }})*{% endif %}
+{% endfor %}
+{% endfor %}
+"""
+
+trim = true
+
+# Map commit types onto Keep a Changelog sections.
+commit_parsers = [
+  { message = "^feat",     group = "Added"      },
+  { message = "^fix",      group = "Fixed"      },
+  { message = "^perf",     group = "Performance"},
+  { message = "^revert",   group = "Reverted"   },
+  { message = "^docs",     group = "Documentation" },
+  { message = "^refactor", group = "Changed"    },
+  { message = "^style",    group = "Changed"    },
+  { message = "^test",     group = "Tests"      },
+  { message = "^chore",    skip  = true         },
+  { message = "^ci",       skip  = true         },
+  { message = "^build",    group = "Changed"    },
+  { body    = ".*security",group = "Security"   },
+]
+
+# Sort commits within each section so the output is stable.
+filter_commits = false
+sort_commits = "newest"
+
+# Treat `BREAKING CHANGE:` footer or `!` in type as breaking.
+protect_breaking_commits = true

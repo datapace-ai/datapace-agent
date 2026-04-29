@@ -1,0 +1,48 @@
+name: Release PR
+
+# release-plz inspects every push to `main`, derives the next version from
+# Conventional Commits, and opens (or updates) a release PR that bumps
+# Cargo.toml + appends to CHANGELOG.md. Merging the release PR pushes a
+# `vX.Y.Z` tag, which triggers `.github/workflows/release.yml` to build
+# binaries, push the multi-arch image to GHCR, and cut a GitHub Release.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write       # commit changelog + tag
+  pull-requests: write  # open / update the release PR
+
+# Avoid concurrent release-plz runs racing each other on busy days.
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-plz:
+    name: Release PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # release-plz needs full history to walk commits
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: MarcoIeni/release-plz-action@v0.5
+        env:
+          # Prefer a Personal Access Token if set — tags pushed by the default
+          # GITHUB_TOKEN do **not** trigger other workflows, which means the
+          # `vX.Y.Z` tag would not fire `release.yml`. To enable end-to-end
+          # automation, create a fine-grained PAT with `contents: write` and
+          # `workflows: read` on this repo, store it as `RELEASE_PLZ_TOKEN`,
+          # and the action will use it automatically.
+          # Without the PAT, you can still get the binary + GHCR release by
+          # manually pushing the tag once after the release PR merges:
+          #   git fetch --tags && git push origin v0.X.Y
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}

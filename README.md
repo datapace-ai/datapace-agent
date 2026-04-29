@@ -332,6 +332,19 @@ cargo fmt
 - API keys are scoped to individual projects
 - See [SECURITY.md](docs/SECURITY.md) for our security policy
 
+## Releases & changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history. Versions follow
+[Semantic Versioning](https://semver.org/) and are cut automatically by
+[release-plz](https://release-plz.dev/) from [Conventional Commits](https://www.conventionalcommits.org/)
+on `main`.
+
+## Contributing
+
+Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the commit
+convention and the release flow — the short version is "use Conventional
+Commits in your PR title; everything else is automated."
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) for details.
