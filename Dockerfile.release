@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+# CI-only: uses pre-built binaries from the build matrix.
+# For local development use the regular Dockerfile instead.
+FROM debian:bookworm-slim
+
+ARG TARGETARCH
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g 1000 datapace && \
+    useradd -u 1000 -g datapace -s /bin/sh -d /app -M datapace
+
+WORKDIR /app
+
+# Pre-built binary placed at docker-bins/${TARGETARCH}/datapace-agent by CI
+COPY docker-bins/${TARGETARCH}/datapace-agent /usr/local/bin/datapace-agent
+COPY configs/agent.example.yaml /app/agent.example.yaml
+
+USER datapace
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["datapace-agent"]
+CMD []
+
+LABEL org.opencontainers.image.source="https://github.com/datapace-ai/datapace-agent"
+LABEL org.opencontainers.image.description="Datapace Agent - Database metrics collector"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
