@@ -34,12 +34,15 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Read-only diagnostic step — runs release-plz CLI ourselves with
-      # --dry-run so it has no side effects (no branch push, no PR open),
-      # and merges stderr into stdout so the decision is visible in the
-      # Actions log. The packaged action's bash wrapper redirects release-pr
-      # stderr to a tempfile that gets discarded on success, swallowing the
-      # INFO output that would explain a no-op like `{"prs":[]}`.
+      # Read-only diagnostic step — runs `release-plz update`, which is the
+      # local-only equivalent of `release-pr` (same version-computation
+      # logic, but edits Cargo.toml + CHANGELOG.md on disk instead of
+      # opening a PR — no branch push, no PR open). Stderr is merged into
+      # stdout via 2>&1 so the decision is visible in the Actions log.
+      # The packaged action's bash wrapper redirects release-pr stderr to a
+      # tempfile that gets discarded on success, swallowing the INFO output
+      # that would explain a no-op like `{"prs":[]}`. We do not commit the
+      # local edits — the runner is ephemeral.
       - name: Diagnose release-plz decision (read-only)
         shell: bash
         env:
@@ -51,12 +54,11 @@ jobs:
             https://github.com/release-plz/release-plz/releases/latest/download/release-plz-x86_64-unknown-linux-gnu.tar.gz \
             | tar -xz -C /tmp release-plz
           /tmp/release-plz --version
-          /tmp/release-plz release-pr \
-            --git-token "${GITHUB_TOKEN}" \
-            --repo-url "https://github.com/${GITHUB_REPOSITORY}" \
-            --dry-run \
-            --verbose \
-            2>&1 || true
+          /tmp/release-plz update --verbose 2>&1 || true
+          echo "---- post-update diff (what release-pr would have proposed) ----"
+          git --no-pager diff --stat || true
+          git --no-pager diff -- Cargo.toml CHANGELOG.md || true
+          git checkout -- Cargo.toml CHANGELOG.md || true
 
       - name: Run release-plz
         uses: MarcoIeni/release-plz-action@v0.5
