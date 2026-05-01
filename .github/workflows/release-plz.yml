@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: write       # commit changelog + tag
@@ -33,8 +34,34 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Read-only diagnostic step — runs release-plz CLI ourselves with
+      # --dry-run so it has no side effects (no branch push, no PR open),
+      # and merges stderr into stdout so the decision is visible in the
+      # Actions log. The packaged action's bash wrapper redirects release-pr
+      # stderr to a tempfile that gets discarded on success, swallowing the
+      # INFO output that would explain a no-op like `{"prs":[]}`.
+      - name: Diagnose release-plz decision (read-only)
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+          RUST_LOG: release_plz=debug,release_plz_core=debug,git_cliff_core=debug
+        run: |
+          set -x
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            https://github.com/release-plz/release-plz/releases/latest/download/release-plz-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C /tmp release-plz
+          /tmp/release-plz --version
+          /tmp/release-plz release-pr \
+            --git-token "${GITHUB_TOKEN}" \
+            --repo-url "https://github.com/${GITHUB_REPOSITORY}" \
+            --dry-run \
+            --verbose \
+            2>&1 || true
+
       - name: Run release-plz
         uses: MarcoIeni/release-plz-action@v0.5
+        with:
+          verbose: true
         env:
           # Prefer a Personal Access Token if set — tags pushed by the default
           # GITHUB_TOKEN do **not** trigger other workflows, which means the
