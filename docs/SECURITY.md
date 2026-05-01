@@ -72,6 +72,30 @@ The agent collects **only metadata and statistics**, never actual row data:
 - Never logged or sent to cloud
 - Use environment variables: `DATABASE_URL=postgres://...`
 
+### Payload Integrity (HMAC signing)
+
+Every request the agent sends to Datapace Cloud is signed with HMAC-SHA256 over the request timestamp and body, and verified by the platform with constant-time comparison and a ±300 s timestamp window. The signature uses a per-connection signing secret that is **distinct from the API key** and is never sent over the wire.
+
+```
+X-Signature           = lowercase_hex( HMAC-SHA256( signing_secret, "<unix_timestamp>.<raw_body>" ) )
+X-Signature-Timestamp = unix_timestamp (seconds)
+Authorization         = Bearer <api_key>
+```
+
+**Threat model — what HMAC signing protects against, on top of TLS:**
+
+- **Compromised TLS-terminating intermediary** (corporate egress proxy, WAF, API gateway, k8s sidecar). These see decrypted headers including `Authorization: Bearer …`, so a compromise leaks the API key. They do **not** see the signing secret — it is never serialized into a request — so they cannot forge or modify signed bodies.
+- **Leaked request logs** on either side. Same argument: API keys appear in headers and may end up in access logs; signing secrets do not.
+- **Body tampering in flight.** Any mutation of the JSON body invalidates the HMAC.
+- **Replay attacks.** The timestamp is part of the HMAC input and the platform rejects timestamps outside ±300 s.
+
+**What it does not protect against:**
+
+- **Compromise of the host running the agent.** The signing secret lives there in memory; an attacker with code execution on the agent host can compute valid signatures. Defend with the existing controls (read-only filesystem, non-root user, secrets manager) called out in the deployment recommendations above.
+- **A leaked signing secret.** Rotate the connection in the Datapace dashboard to invalidate the secret.
+
+The signing secret is shown to the user **once** in the Datapace dashboard at connection-creation time and stored AES-256-GCM-encrypted server-side. Lost secrets cannot be recovered, only rotated. See the [Payload signing](../README.md#payload-signing) section of the README for the user-facing rationale.
+
 ### Container Security
 
 **Docker Image:**

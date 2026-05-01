@@ -26,6 +26,21 @@ pub enum ConfigError {
     #[error("Missing required field: {0}")]
     MissingField(String),
 
+    #[error(
+        "missing required environment variable: DATAPACE_SIGNING_SECRET\n\n\
+         This is the HMAC-SHA256 secret the agent uses to sign every payload sent to\n\
+         Datapace Cloud. It is shown once in the Datapace dashboard when the\n\
+         connection is created (Settings → Connections); if you don't have it stored,\n\
+         rotate the connection to get a new pair. It is distinct from DATAPACE_API_KEY\n\
+         by design: the API key authenticates the request and travels in every\n\
+         request header; the signing secret never travels and proves the body has\n\
+         not been tampered with on the network path.\n\n\
+         Without it set, the cloud verifier rejects every request with\n\
+         401 InvalidSignature.\n\n\
+         See https://github.com/datapace-ai/datapace-agent#payload-signing for details."
+    )]
+    MissingSigningSecret,
+
     #[error("Unsupported database type: {0}")]
     UnsupportedDatabase(String),
 }
@@ -396,14 +411,13 @@ pub struct Config {
 pub struct DatapaceConfig {
     pub api_key: String,
 
-    /// Secret used to sign payloads via HMAC-SHA256.
-    ///
-    /// If unset, falls back to `api_key` for backward compatibility — but this
-    /// defeats tamper detection because the API key is also sent on every
-    /// request in the `Authorization` header. Operators should provision a
-    /// distinct `DATAPACE_SIGNING_SECRET`.
-    #[serde(default)]
-    pub signing_secret: Option<String>,
+    /// Per-connection HMAC-SHA256 secret used to sign payloads sent to
+    /// Datapace Cloud. Required: distinct from `api_key` by design — the API
+    /// key authenticates ("who are you?") and is sent in every request header,
+    /// while the signing secret never travels and proves the body has not
+    /// been tampered with on the network path. Provisioned alongside the API
+    /// key in the Datapace dashboard at connection-creation time.
+    pub signing_secret: String,
 
     #[serde(default = "default_endpoint")]
     pub endpoint: String,
@@ -704,12 +718,13 @@ impl Config {
         let database_url = std::env::var("DATABASE_URL")
             .map_err(|_| ConfigError::MissingField("DATABASE_URL".to_string()))?;
 
-        // Treat empty env vars as unset for optional fields. This matches
-        // common shell conventions (`${VAR:-}` in docker-compose etc.) and
-        // avoids tripping the empty-string validator on `signing_secret`.
+        // Required. Empty/whitespace-only values are treated as unset so that
+        // shell conventions like `${VAR:-}` in docker-compose surface the same
+        // actionable error as the variable being absent.
         let signing_secret = std::env::var("DATAPACE_SIGNING_SECRET")
             .ok()
-            .filter(|s| !s.trim().is_empty());
+            .filter(|s| !s.trim().is_empty())
+            .ok_or(ConfigError::MissingSigningSecret)?;
 
         let endpoint = std::env::var("DATAPACE_ENDPOINT")
             .ok()
@@ -791,12 +806,8 @@ impl Config {
             ));
         }
 
-        if let Some(ref s) = self.datapace.signing_secret {
-            if s.trim().is_empty() {
-                return Err(ConfigError::ValidationError(
-                    "Signing secret cannot be empty when set".to_string(),
-                ));
-            }
+        if self.datapace.signing_secret.trim().is_empty() {
+            return Err(ConfigError::MissingSigningSecret);
         }
 
         if self.database.url.is_empty() {
@@ -1025,7 +1036,7 @@ mod tests {
         Config {
             datapace: DatapaceConfig {
                 api_key: "valid-key".to_string(),
-                signing_secret: None,
+                signing_secret: "valid-signing-secret".to_string(),
                 endpoint: default_endpoint(),
                 timeout: default_timeout(),
                 retries: default_retries(),
@@ -1083,28 +1094,31 @@ mod tests {
     #[test]
     fn test_validate_rejects_empty_signing_secret() {
         let mut config = valid_config();
-        config.datapace.signing_secret = Some("".to_string());
+        config.datapace.signing_secret = "".to_string();
         let err = config
             .validate()
-            .expect_err("empty signing_secret must be rejected when set");
-        match err {
-            ConfigError::ValidationError(msg) => {
-                assert!(
-                    msg.to_lowercase().contains("signing secret"),
-                    "error message should mention signing secret, got: {}",
-                    msg
-                );
-            }
-            other => panic!("expected ValidationError, got: {:?}", other),
-        }
+            .expect_err("empty signing_secret must be rejected");
+        assert!(matches!(err, ConfigError::MissingSigningSecret));
     }
 
     #[test]
-    fn test_validate_accepts_none_signing_secret() {
-        // signing_secret = None is valid; it falls back to api_key at the
-        // uploader layer. Only an explicit empty string is rejected.
+    fn test_validate_rejects_whitespace_only_signing_secret() {
         let mut config = valid_config();
-        config.datapace.signing_secret = None;
-        assert!(config.validate().is_ok());
+        config.datapace.signing_secret = "   ".to_string();
+        let err = config
+            .validate()
+            .expect_err("whitespace-only signing_secret must be rejected");
+        assert!(matches!(err, ConfigError::MissingSigningSecret));
+    }
+
+    #[test]
+    fn test_missing_signing_secret_error_is_actionable() {
+        // The Display impl is what users see at startup; assert it surfaces
+        // the env var name, the dashboard origin, and the 401 consequence so
+        // the message stays actionable as the file evolves.
+        let msg = ConfigError::MissingSigningSecret.to_string();
+        assert!(msg.contains("DATAPACE_SIGNING_SECRET"));
+        assert!(msg.contains("dashboard"));
+        assert!(msg.contains("401"));
     }
 }
