@@ -44,13 +44,10 @@ pub struct UploaderConfig {
     /// API key for authentication (sent as `Authorization: Bearer`).
     pub api_key: String,
 
-    /// Secret used for HMAC-SHA256 payload signing.
-    ///
-    /// Resolved at construction via [`UploaderConfig::new`]. If no explicit
-    /// secret is provided, falls back to the API key for backward
-    /// compatibility — but this defeats tamper detection, because the API
-    /// key is sent on every request. Operators should set
-    /// `DATAPACE_SIGNING_SECRET` to a distinct value.
+    /// Per-connection HMAC-SHA256 secret used to sign payloads. Required and
+    /// distinct from `api_key` by design: the API key authenticates the
+    /// request (and is sent in every header), the signing secret never
+    /// travels and proves body integrity on the network path.
     pub signing_secret: String,
 
     /// Request timeout
@@ -67,11 +64,10 @@ pub struct UploaderConfig {
 }
 
 impl UploaderConfig {
-    /// Build a new uploader config.
-    ///
-    /// If `signing_secret` is `None`, falls back to `api_key`.
-    pub fn new(endpoint: String, api_key: String, signing_secret: Option<String>) -> Self {
-        let signing_secret = signing_secret.unwrap_or_else(|| api_key.clone());
+    /// Build a new uploader config. `signing_secret` must be a distinct value
+    /// from `api_key` — see the [`signing_secret`](Self::signing_secret) field
+    /// docs.
+    pub fn new(endpoint: String, api_key: String, signing_secret: String) -> Self {
         Self {
             endpoint,
             api_key,
@@ -313,7 +309,7 @@ mod tests {
         let config = UploaderConfig::new(
             "https://api.datapace.ai/v1/ingest".to_string(),
             "test_key".to_string(),
-            None,
+            "test-signing-secret".to_string(),
         );
 
         assert_eq!(config.timeout, Duration::from_secs(30));
@@ -322,26 +318,15 @@ mod tests {
     }
 
     #[test]
-    fn test_uploader_config_signing_secret_fallback() {
-        // No explicit signing secret → falls back to api_key.
-        let config = UploaderConfig::new(
-            "https://api.datapace.ai/v1/ingest".to_string(),
-            "fallback-key".to_string(),
-            None,
-        );
-        assert_eq!(config.signing_secret, "fallback-key");
-    }
-
-    #[test]
-    fn test_uploader_config_signing_secret_override() {
-        // Explicit signing secret is preserved and is independent of api_key.
+    fn test_uploader_config_keeps_keys_distinct() {
         let config = UploaderConfig::new(
             "https://api.datapace.ai/v1/ingest".to_string(),
             "api-key".to_string(),
-            Some("distinct-signing-secret".to_string()),
+            "distinct-signing-secret".to_string(),
         );
         assert_eq!(config.api_key, "api-key");
         assert_eq!(config.signing_secret, "distinct-signing-secret");
+        assert_ne!(config.api_key, config.signing_secret);
     }
 
     #[test]
@@ -354,42 +339,11 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_signature() {
-        // Backward-compat: with no explicit signing secret, api_key is used.
-        let config = UploaderConfig::new(
-            "https://api.datapace.ai/v1/ingest".to_string(),
-            "test-api-key-123".to_string(),
-            None,
-        );
-        let uploader = Uploader::new(config).expect("Failed to create uploader");
-
-        let body = b"hello world";
-        let timestamp = "1700000000";
-        let signature = uploader.compute_signature(body, timestamp);
-
-        // Recompute expected value using the same HMAC logic
-        use hmac::{Hmac, Mac};
-        use sha2::Sha256;
-        type HmacSha256 = Hmac<Sha256>;
-
-        let mut mac =
-            HmacSha256::new_from_slice(b"test-api-key-123").expect("HMAC can take key of any size");
-        mac.update(b"1700000000");
-        mac.update(b".");
-        mac.update(b"hello world");
-        let expected = hex::encode(mac.finalize().into_bytes());
-
-        assert_eq!(signature, expected);
-    }
-
-    #[test]
     fn test_compute_signature_uses_signing_secret_not_api_key() {
-        // When a distinct signing secret is provided, the signature must be
-        // derived from that secret, not from the API key.
         let config = UploaderConfig::new(
             "https://api.datapace.ai/v1/ingest".to_string(),
             "api-key-xxx".to_string(),
-            Some("separate-signing-secret".to_string()),
+            "separate-signing-secret".to_string(),
         );
         let uploader = Uploader::new(config).expect("Failed to create uploader");
 
@@ -401,7 +355,6 @@ mod tests {
         use sha2::Sha256;
         type HmacSha256 = Hmac<Sha256>;
 
-        // Expected: derived from signing secret
         let mut mac = HmacSha256::new_from_slice(b"separate-signing-secret")
             .expect("HMAC can take key of any size");
         mac.update(b"1700000000");
@@ -410,7 +363,6 @@ mod tests {
         let expected = hex::encode(mac.finalize().into_bytes());
         assert_eq!(signature, expected);
 
-        // Counter-check: signature must NOT equal the one derived from api_key
         let mut mac_bad =
             HmacSha256::new_from_slice(b"api-key-xxx").expect("HMAC can take key of any size");
         mac_bad.update(b"1700000000");
@@ -425,7 +377,7 @@ mod tests {
         let config = UploaderConfig::new(
             "https://api.datapace.ai/v1/ingest".to_string(),
             "test-api-key-123".to_string(),
-            None,
+            "test-signing-secret".to_string(),
         );
         let uploader = Uploader::new(config).expect("Failed to create uploader");
 
@@ -439,18 +391,18 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_signature_different_keys() {
+    fn test_compute_signature_different_signing_secrets() {
         let config1 = UploaderConfig::new(
             "https://api.datapace.ai/v1/ingest".to_string(),
-            "key-alpha".to_string(),
-            None,
+            "shared-key".to_string(),
+            "secret-alpha".to_string(),
         );
         let uploader1 = Uploader::new(config1).expect("Failed to create uploader");
 
         let config2 = UploaderConfig::new(
             "https://api.datapace.ai/v1/ingest".to_string(),
-            "key-beta".to_string(),
-            None,
+            "shared-key".to_string(),
+            "secret-beta".to_string(),
         );
         let uploader2 = Uploader::new(config2).expect("Failed to create uploader");
 

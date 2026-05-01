@@ -21,6 +21,7 @@ A lightweight, open-source agent that collects database metrics and sends them t
 docker run -d \
   --name datapace-agent \
   -e DATAPACE_API_KEY=your_api_key \
+  -e DATAPACE_SIGNING_SECRET=your_signing_secret \
   -e DATABASE_URL=postgres://user:pass@host:5432/dbname \
   ghcr.io/datapace-ai/datapace-agent:latest
 ```
@@ -33,6 +34,7 @@ services:
     image: ghcr.io/datapace-ai/datapace-agent:latest
     environment:
       DATAPACE_API_KEY: ${DATAPACE_API_KEY}
+      DATAPACE_SIGNING_SECRET: ${DATAPACE_SIGNING_SECRET}
       DATABASE_URL: ${DATABASE_URL}
     restart: unless-stopped
 ```
@@ -46,9 +48,12 @@ chmod +x datapace-agent
 
 # Run with environment variables
 export DATAPACE_API_KEY=your_api_key
+export DATAPACE_SIGNING_SECRET=your_signing_secret
 export DATABASE_URL=postgres://user:pass@host:5432/dbname
 ./datapace-agent
 ```
+
+> Both `DATAPACE_API_KEY` and `DATAPACE_SIGNING_SECRET` are issued together in the Datapace dashboard when you create a connection — see [Payload signing](#payload-signing) for why two distinct keys are needed. The repo's [`docker-compose.yml`](docker-compose.yml) is the canonical reference for a complete env-var setup.
 
 ## Configuration
 
@@ -58,12 +63,31 @@ The agent can be configured via environment variables or a YAML config file.
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `DATAPACE_API_KEY` | Your Datapace API key | Yes |
-| `DATABASE_URL` | PostgreSQL connection string | Yes |
-| `DATAPACE_ENDPOINT` | API endpoint (default: `https://api.datapace.ai`) | No |
-| `COLLECTION_INTERVAL` | Metrics collection interval (default: `60s`) | No |
-| `LOG_LEVEL` | Log level: `debug`, `info`, `warn`, `error` (default: `info`) | No |
+| `DATAPACE_API_KEY` | Your Datapace Cloud API key | Yes |
+| `DATABASE_URL` | Database connection string (`postgres://…`, `mongodb://…`) | Yes |
+| `DATAPACE_SIGNING_SECRET` | Per-connection HMAC-SHA256 secret used to sign every payload. Provisioned alongside the API key in the Datapace dashboard at connection-creation time. See [Payload signing](#payload-signing). | Yes |
+| `DATAPACE_ENDPOINT` | Override the cloud endpoint (default: `https://api.datapace.ai/v1/ingest`) | No |
+| `COLLECTION_INTERVAL` | Metrics collection interval, e.g. `30s`, `1m`, `5m` (default: `60s`) | No |
+| `LOG_LEVEL` | Log level: `trace`, `debug`, `info`, `warn`, `error` (default: `info`) | No |
 | `LOG_FORMAT` | Log format: `json`, `pretty` (default: `json`) | No |
+| `DATAPACE_HEALTH_BIND_ADDRESS` | Health server bind address (default: `127.0.0.1`). Set to `0.0.0.0` inside containers if you want to publish the health port. | No |
+| `DATAPACE_HEALTH_PORT` | Health server port (default: `8080`) | No |
+
+### Payload signing
+
+Every request to Datapace Cloud is signed by the agent and verified by the platform:
+
+```
+X-Signature           = lowercase_hex( HMAC-SHA256( signing_secret, "<unix_timestamp>.<raw_body>" ) )
+X-Signature-Timestamp = unix_timestamp (seconds)
+Authorization         = Bearer <api_key>
+```
+
+The platform requires the timestamp within ±300 s of server time and uses constant-time comparison to verify the signature.
+
+**Why two separate keys?** The API key and the signing secret play different roles, even though the platform issues both. The API key authenticates the connection and travels in the `Authorization` header on every request — so it is observable to any TLS-terminating intermediary on the path (proxies, WAFs, gateways, sidecars) and to platform-side request logs. The signing secret never travels; only the HMAC output does, and HMAC is one-way. If the signing secret were the same as the API key, every middlebox that sees the API key would also be able to forge valid signatures, and the integrity layer would be ceremonial.
+
+**Where do I get it?** The signing secret is generated and shown to you **once** in the Datapace dashboard at connection-creation time, and stored AES-256-GCM-encrypted server-side. Lost secrets cannot be recovered, only rotated.
 
 ### Config File
 
@@ -71,6 +95,7 @@ The agent can be configured via environment variables or a YAML config file.
 # agent.yaml
 datapace:
   api_key: ${DATAPACE_API_KEY}
+  signing_secret: ${DATAPACE_SIGNING_SECRET}
   endpoint: https://api.datapace.ai/v1/ingest
 
 database:
@@ -337,13 +362,8 @@ cargo fmt
 See [CHANGELOG.md](CHANGELOG.md) for the full release history. Versions follow
 [Semantic Versioning](https://semver.org/) and are cut automatically by
 [release-plz](https://release-plz.dev/) from [Conventional Commits](https://www.conventionalcommits.org/)
-on `main`.
-
-## Contributing
-
-Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the commit
-convention and the release flow — the short version is "use Conventional
-Commits in your PR title; everything else is automated."
+on `main`. PR titles must follow the Conventional Commits format — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

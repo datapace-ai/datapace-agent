@@ -23,11 +23,14 @@ services:
     environment:
       # Required
       DATAPACE_API_KEY: ${DATAPACE_API_KEY:-dev-test-key}
+      # Required: per-connection HMAC signing secret, distinct from the API key.
+      # Dev default is a placeholder so `docker-compose --profile dev up` boots
+      # against the in-network postgres without prompting; production must set
+      # this from the host env / .env file to the value issued by the dashboard.
+      DATAPACE_SIGNING_SECRET: ${DATAPACE_SIGNING_SECRET:-dev-test-signing-secret}
       # In dev, default to the in-network postgres service. Override via
       # the host env or .env file for production.
       DATABASE_URL: ${DATABASE_URL:-postgres://datapace:datapace@postgres:5432/datapace_dev}
-      # Optional but recommended in production: distinct HMAC signing secret.
-      DATAPACE_SIGNING_SECRET: ${DATAPACE_SIGNING_SECRET:-}
       # Optional: override the cloud endpoint (defaults to api.datapace.ai).
       DATAPACE_ENDPOINT: ${DATAPACE_ENDPOINT:-}
       COLLECTION_INTERVAL: ${COLLECTION_INTERVAL:-60s}
