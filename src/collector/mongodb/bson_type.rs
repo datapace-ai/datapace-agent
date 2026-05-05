@@ -61,10 +61,19 @@ mod tests {
 
     #[test]
     fn label_special_types() {
-        assert_eq!(bson_type_label(&Bson::ObjectId(ObjectId::new())), "object_id");
-        assert_eq!(bson_type_label(&Bson::DateTime(DateTime::now())), "date_time");
         assert_eq!(
-            bson_type_label(&Bson::Timestamp(Timestamp { time: 0, increment: 0 })),
+            bson_type_label(&Bson::ObjectId(ObjectId::new())),
+            "object_id"
+        );
+        assert_eq!(
+            bson_type_label(&Bson::DateTime(DateTime::now())),
+            "date_time"
+        );
+        assert_eq!(
+            bson_type_label(&Bson::Timestamp(Timestamp {
+                time: 0,
+                increment: 0
+            })),
             "timestamp"
         );
         let dec: Decimal128 = "1.5".parse().unwrap();
