@@ -13,8 +13,8 @@ mod queries;
 use crate::collector::{Collector, CollectorError};
 use crate::config::{DatabaseType, Provider};
 use crate::payload::{
-    DatabaseInfo, IndexMetadata, IndexStats, Payload, QueryStats, SchemaMetadata, TableMetadata,
-    TableStats,
+    ColumnMetadata, DatabaseInfo, IndexMetadata, IndexStats, Payload, QueryStats, SchemaMetadata,
+    TableMetadata, TableStats,
 };
 use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -33,17 +33,51 @@ pub struct PostgresCollector {
 }
 
 impl PostgresCollector {
-    /// Create a new PostgreSQL collector
+    /// Create a new PostgreSQL collector.
+    ///
+    /// Retries the initial pool acquire with exponential backoff so the agent
+    /// survives a slow-starting database (e.g. when the Postgres container is
+    /// still finishing `init.sql` while compose has already declared it
+    /// healthy). Once a connection succeeds the pool runs without retry; this
+    /// only handles the cold-start race.
     pub async fn new(database_url: &str, provider: Provider) -> Result<Self, CollectorError> {
         info!("Connecting to PostgreSQL database");
 
-        let pool = PgPoolOptions::new()
-            .min_connections(1)
-            .max_connections(5)
-            .acquire_timeout(Duration::from_secs(30))
-            .connect(database_url)
-            .await
-            .map_err(|e| CollectorError::ConnectionError(e.to_string()))?;
+        const MAX_ATTEMPTS: u32 = 6;
+        let mut backoff = Duration::from_secs(2);
+        let mut last_err = String::new();
+        let mut pool = None;
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            match PgPoolOptions::new()
+                .min_connections(1)
+                .max_connections(5)
+                .acquire_timeout(Duration::from_secs(10))
+                .connect(database_url)
+                .await
+            {
+                Ok(p) => {
+                    pool = Some(p);
+                    break;
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    if attempt < MAX_ATTEMPTS {
+                        warn!(
+                            attempt,
+                            max_attempts = MAX_ATTEMPTS,
+                            backoff_secs = backoff.as_secs(),
+                            error = %last_err,
+                            "Database connect failed; retrying"
+                        );
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(Duration::from_secs(30));
+                    }
+                }
+            }
+        }
+
+        let pool = pool.ok_or(CollectorError::ConnectionError(last_err))?;
 
         // Get database version
         let version = Self::get_version(&pool).await?;
@@ -172,20 +206,49 @@ impl PostgresCollector {
     async fn collect_schema_metadata(&self) -> Result<SchemaMetadata, CollectorError> {
         debug!("Collecting schema metadata");
 
-        // Collect tables
+        // Collect tables.
         let table_rows = sqlx::query_as::<_, queries::TableInfoRow>(queries::TABLE_INFO)
             .fetch_all(&self.pool)
             .await?;
 
+        // Collect columns and group by `(schema, table)` so we can join into
+        // each table's `columns` field below. information_schema.columns is
+        // already ordered by `(table_schema, table_name, ordinal_position)`,
+        // so the per-table list arrives in column order.
+        let column_rows = sqlx::query_as::<_, queries::ColumnInfoRow>(queries::COLUMN_INFO)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut columns_by_table: HashMap<(String, String), Vec<ColumnMetadata>> = HashMap::new();
+        for row in column_rows {
+            let key = (row.table_schema.clone(), row.table_name.clone());
+            columns_by_table
+                .entry(key)
+                .or_default()
+                .push(ColumnMetadata {
+                    name: row.column_name,
+                    data_type: row.data_type,
+                    nullable: row.is_nullable.eq_ignore_ascii_case("YES"),
+                    default: row.column_default,
+                    position: row.ordinal_position,
+                    ..Default::default()
+                });
+        }
+
         let tables: Vec<TableMetadata> = table_rows
             .into_iter()
-            .map(|row| TableMetadata {
-                schema: row.table_schema,
-                name: row.table_name,
-                columns: vec![], // Columns collected separately
-                row_count_estimate: row.row_estimate,
-                size_bytes: row.total_bytes,
-                ..Default::default()
+            .map(|row| {
+                let columns = columns_by_table
+                    .remove(&(row.table_schema.clone(), row.table_name.clone()))
+                    .unwrap_or_default();
+                TableMetadata {
+                    schema: row.table_schema,
+                    name: row.table_name,
+                    columns,
+                    row_count_estimate: row.row_estimate,
+                    size_bytes: row.total_bytes,
+                    ..Default::default()
+                }
             })
             .collect();
 
