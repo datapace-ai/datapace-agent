@@ -120,7 +120,13 @@ impl SchemaWalker {
         }
 
         // Record the value at this path (counts toward presence even for containers).
-        self.record_path(path, bson_type_label(value), value, in_array, visited_in_doc);
+        self.record_path(
+            path,
+            bson_type_label(value),
+            value,
+            in_array,
+            visited_in_doc,
+        );
 
         // Recurse into structural children.
         match value {
@@ -162,18 +168,21 @@ impl SchemaWalker {
         }
 
         let position = self.next_position;
-        let stats = self.paths.entry(path.to_string()).or_insert_with(|| PathStats {
-            seen_count: 0,
-            null_count: 0,
-            types: BTreeSet::new(),
-            distinct: HashSet::new(),
-            distinct_capped: false,
-            samples: Vec::new(),
-            samples_seen: 0,
-            array_max_len: None,
-            is_array_element: in_array,
-            first_seen_position: position,
-        });
+        let stats = self
+            .paths
+            .entry(path.to_string())
+            .or_insert_with(|| PathStats {
+                seen_count: 0,
+                null_count: 0,
+                types: BTreeSet::new(),
+                distinct: HashSet::new(),
+                distinct_capped: false,
+                samples: Vec::new(),
+                samples_seen: 0,
+                array_max_len: None,
+                is_array_element: in_array,
+                first_seen_position: position,
+            });
         if stats.first_seen_position == position {
             self.next_position += 1;
         }
@@ -240,7 +249,12 @@ impl SchemaWalker {
                 let nullable = s.null_count > 0 || presence_rate < 1.0;
 
                 let data_type = if s.types.len() == 1 {
-                    s.types.iter().next().copied().unwrap_or("unknown").to_string()
+                    s.types
+                        .iter()
+                        .next()
+                        .copied()
+                        .unwrap_or("unknown")
+                        .to_string()
                 } else if s.types.is_empty() {
                     "unknown".to_string()
                 } else {
@@ -263,10 +277,18 @@ impl SchemaWalker {
                     position: s.first_seen_position,
                     presence_rate: Some(presence_rate),
                     null_rate: Some(null_rate),
-                    bson_types: if bson_types.is_empty() { None } else { Some(bson_types) },
+                    bson_types: if bson_types.is_empty() {
+                        None
+                    } else {
+                        Some(bson_types)
+                    },
                     distinct_count,
                     distinct_capped: Some(distinct_capped),
-                    sample_values: if s.samples.is_empty() { None } else { Some(s.samples) },
+                    sample_values: if s.samples.is_empty() {
+                        None
+                    } else {
+                        Some(s.samples)
+                    },
                     is_array_element: Some(s.is_array_element),
                     array_max_len: s.array_max_len,
                 }
@@ -298,7 +320,9 @@ fn bson_to_json(value: &Bson) -> serde_json::Value {
         Bson::Int32(i) => serde_json::Value::Number((*i).into()),
         Bson::Int64(i) => serde_json::Value::Number((*i).into()),
         Bson::ObjectId(oid) => serde_json::Value::String(oid.to_hex()),
-        Bson::DateTime(dt) => serde_json::Value::String(dt.try_to_rfc3339_string().unwrap_or_default()),
+        Bson::DateTime(dt) => {
+            serde_json::Value::String(dt.try_to_rfc3339_string().unwrap_or_default())
+        }
         Bson::Decimal128(d) => serde_json::Value::String(d.to_string()),
         Bson::Document(_) | Bson::Array(_) => {
             // For samples we don't recurse — surfaces as a placeholder.
@@ -318,7 +342,9 @@ mod tests {
     }
 
     fn col<'a>(cols: &'a [ColumnMetadata], name: &str) -> &'a ColumnMetadata {
-        cols.iter().find(|c| c.name == name).unwrap_or_else(|| panic!("path {name} missing"))
+        cols.iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("path {name} missing"))
     }
 
     #[test]

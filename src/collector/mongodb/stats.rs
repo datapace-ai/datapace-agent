@@ -38,9 +38,10 @@ pub async fn collect_table_stats(
                     n_tup_ins: None,
                     n_tup_upd: None,
                     n_tup_del: None,
-                    n_live_tup: stats.get_i64("count").ok().or_else(|| {
-                        stats.get_i32("count").ok().map(i64::from)
-                    }),
+                    n_live_tup: stats
+                        .get_i64("count")
+                        .ok()
+                        .or_else(|| stats.get_i32("count").ok().map(i64::from)),
                     n_dead_tup: None,
                     last_vacuum: None,
                     last_autovacuum: None,
@@ -82,10 +83,11 @@ pub async fn collect_index_stats(
                 }
             };
             let name = doc.get_str("name").unwrap_or("").to_string();
-            let ops = doc
-                .get_document("accesses")
-                .ok()
-                .and_then(|a| a.get_i64("ops").ok().or_else(|| a.get_i32("ops").ok().map(i64::from)));
+            let ops = doc.get_document("accesses").ok().and_then(|a| {
+                a.get_i64("ops")
+                    .ok()
+                    .or_else(|| a.get_i32("ops").ok().map(i64::from))
+            });
             out.push(IndexStats {
                 schema: db_name.clone(),
                 table: coll_name.clone(),
