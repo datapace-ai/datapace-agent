@@ -16,6 +16,17 @@
 # distributed via GHCR + GitHub Releases.
 publish = false
 
+# Determine the previous-release version from git tags, not the cargo
+# registry. Required for `publish = false` packages: without `git_only`,
+# release-plz tries to find the package on crates.io, fails (because we
+# never publish), then walks the *entire* git history looking for a
+# packaged-files match against a non-existent registry version, finally
+# concluding `next_version == current_version` and silently emitting
+# `{"prs":[]}`. With `git_only = true` it walks only the commits since
+# the latest tag matching `git_tag_name` and applies normal Conventional
+# Commits bump rules. (See release-plz docs > Configuration > git_only.)
+git_only = true
+
 # Do create the git tag — release.yml is gated on `v*` tags.
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
