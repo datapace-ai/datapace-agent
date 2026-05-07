@@ -111,7 +111,9 @@ mod tests {
     #[test]
     fn url_detects_documentdb() {
         assert_eq!(
-            detect_from_url("mongodb://user:p@my-cluster.cluster-abc.us-east-1.docdb.amazonaws.com:27017/"),
+            detect_from_url(
+                "mongodb://user:p@my-cluster.cluster-abc.us-east-1.docdb.amazonaws.com:27017/"
+            ),
             Some(PROVIDER_DOCUMENTDB)
         );
     }

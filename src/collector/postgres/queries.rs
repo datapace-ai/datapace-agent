@@ -155,11 +155,9 @@ pub struct TableInfoRow {
 
 /// Column information for schema metadata.
 ///
-/// TODO(schema-introspection): scaffolded for column-level metadata
-/// collection but not wired into `PostgresCollector::collect`. Either
-/// connect this to the payload (and drop the `dead_code` allow) or remove
-/// it. Tracking issue: <https://github.com/datapace-ai/datapace-agent/issues>
-#[allow(dead_code)]
+/// Joined per-table by `collect_schema_metadata` to populate
+/// `TableMetadata.columns`. Excludes `pg_catalog` / `information_schema`
+/// since those are server internals, not user-owned schemas.
 pub const COLUMN_INFO: &str = r#"
 SELECT
     table_schema,
@@ -168,18 +166,15 @@ SELECT
     ordinal_position,
     is_nullable,
     data_type,
-    character_maximum_length,
-    numeric_precision,
     column_default
 FROM information_schema.columns
 WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
 ORDER BY table_schema, table_name, ordinal_position
 "#;
 
-// TODO(schema-introspection): paired with `COLUMN_INFO` above. Remove or
-// wire into the collector payload.
+/// Row shape for `COLUMN_INFO` — one row per column, joined into
+/// `TableMetadata.columns` by `collect_schema_metadata`.
 #[derive(Debug, FromRow)]
-#[allow(dead_code)]
 pub struct ColumnInfoRow {
     pub table_schema: String,
     pub table_name: String,
@@ -187,8 +182,6 @@ pub struct ColumnInfoRow {
     pub ordinal_position: i32,
     pub is_nullable: String,
     pub data_type: String,
-    pub character_maximum_length: Option<i32>,
-    pub numeric_precision: Option<i32>,
     pub column_default: Option<String>,
 }
 

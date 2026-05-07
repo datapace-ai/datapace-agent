@@ -13,9 +13,7 @@ pub mod stats;
 
 use crate::collector::{Collector, CollectorError};
 use crate::config::{DatabaseType, Provider};
-use crate::payload::{
-    DatabaseInfo, IndexMetadata, Payload, SchemaMetadata, TableMetadata,
-};
+use crate::payload::{DatabaseInfo, IndexMetadata, Payload, SchemaMetadata, TableMetadata};
 use async_trait::async_trait;
 use futures::StreamExt;
 use mongodb::bson::{doc, Document};
@@ -58,7 +56,9 @@ impl MongoCollector {
             .map_err(map_mongo_err)?;
 
         let version = Self::fetch_version(&client).await;
-        let detected_provider = providers::detect_provider(&client, database_url).await.to_string();
+        let detected_provider = providers::detect_provider(&client, database_url)
+            .await
+            .to_string();
 
         Ok(Self {
             client,
@@ -84,7 +84,10 @@ impl MongoCollector {
             .list_collection_names()
             .await
             .map_err(map_mongo_err)?;
-        Ok(names.into_iter().filter(|n| !n.starts_with("system.")).collect())
+        Ok(names
+            .into_iter()
+            .filter(|n| !n.starts_with("system."))
+            .collect())
     }
 
     async fn collect_schema(&self) -> Result<SchemaMetadata, CollectorError> {
@@ -101,18 +104,26 @@ impl MongoCollector {
                 .await
                 .ok();
 
-            let count = stats_doc
-                .as_ref()
-                .and_then(|s| s.get_i64("count").ok().or_else(|| s.get_i32("count").ok().map(i64::from)));
-            let size_bytes = stats_doc
-                .as_ref()
-                .and_then(|s| s.get_i64("size").ok().or_else(|| s.get_i32("size").ok().map(i64::from)));
-            let avg_obj_size = stats_doc
-                .as_ref()
-                .and_then(|s| s.get_i64("avgObjSize").ok().or_else(|| s.get_i32("avgObjSize").ok().map(i64::from)));
-            let storage_size = stats_doc
-                .as_ref()
-                .and_then(|s| s.get_i64("storageSize").ok().or_else(|| s.get_i32("storageSize").ok().map(i64::from)));
+            let count = stats_doc.as_ref().and_then(|s| {
+                s.get_i64("count")
+                    .ok()
+                    .or_else(|| s.get_i32("count").ok().map(i64::from))
+            });
+            let size_bytes = stats_doc.as_ref().and_then(|s| {
+                s.get_i64("size")
+                    .ok()
+                    .or_else(|| s.get_i32("size").ok().map(i64::from))
+            });
+            let avg_obj_size = stats_doc.as_ref().and_then(|s| {
+                s.get_i64("avgObjSize")
+                    .ok()
+                    .or_else(|| s.get_i32("avgObjSize").ok().map(i64::from))
+            });
+            let storage_size = stats_doc.as_ref().and_then(|s| {
+                s.get_i64("storageSize")
+                    .ok()
+                    .or_else(|| s.get_i32("storageSize").ok().map(i64::from))
+            });
             let is_capped = stats_doc.as_ref().and_then(|s| s.get_bool("capped").ok());
 
             let sample_size = schema::pick_sample_size(count.unwrap_or(0));
@@ -179,8 +190,11 @@ impl MongoCollector {
                                     .and_then(|o| o.name.clone())
                                     .unwrap_or_else(|| "_unnamed_".to_string());
                                 let columns: Vec<String> = model.keys.keys().cloned().collect();
-                                let is_unique =
-                                    model.options.as_ref().and_then(|o| o.unique).unwrap_or(false);
+                                let is_unique = model
+                                    .options
+                                    .as_ref()
+                                    .and_then(|o| o.unique)
+                                    .unwrap_or(false);
                                 let is_primary = name == "_id_";
                                 let size_bytes = index_sizes.get(&name).copied();
                                 indexes.push(IndexMetadata {
@@ -273,7 +287,9 @@ fn map_mongo_err(err: mongodb::error::Error) -> CollectorError {
         ErrorKind::ServerSelection { .. }
         | ErrorKind::DnsResolve { .. }
         | ErrorKind::Io(_)
-        | ErrorKind::ConnectionPoolCleared { .. } => CollectorError::ConnectionError(err.to_string()),
+        | ErrorKind::ConnectionPoolCleared { .. } => {
+            CollectorError::ConnectionError(err.to_string())
+        }
         ErrorKind::InvalidArgument { .. } | ErrorKind::Command(_) => {
             CollectorError::QueryError(err.to_string())
         }

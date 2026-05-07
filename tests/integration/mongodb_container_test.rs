@@ -80,7 +80,10 @@ async fn test_collector_with_container() {
 
     let payload = collector.collect().await.expect("Collection failed");
 
-    assert!(!payload.agent_version.is_empty(), "agent_version must be set");
+    assert!(
+        !payload.agent_version.is_empty(),
+        "agent_version must be set"
+    );
     assert_eq!(payload.database.database_type, "mongodb");
     assert!(payload.schema.is_some(), "schema metadata expected");
     assert!(payload.table_stats.is_some());
